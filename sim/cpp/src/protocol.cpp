@@ -51,6 +51,27 @@ Command parse_command(const std::string& line) {
         }
     }
 
+    if (cmd == "render_image") {
+        try {
+            RenderImage r;
+            r.pan_x        = j.at("pan_x").get<double>();
+            r.pan_y        = j.at("pan_y").get<double>();
+            r.zoom         = j.at("zoom").get<int>();
+            r.fractal_type = j.at("fractal_type").get<std::string>();
+            r.julia_c_real = j.value("julia_c_real", 0.0);
+            r.julia_c_imag = j.value("julia_c_imag", 0.0);
+            r.max_iter     = j.value("max_iter", 256);
+            if (r.fractal_type != "mandelbrot" &&
+                r.fractal_type != "julia" &&
+                r.fractal_type != "burning_ship") {
+                return ParseError{"unknown fractal_type"};
+            }
+            return r;
+        } catch (const json::exception& e) {
+            return ParseError{std::string("render_image fields: ") + e.what()};
+        }
+    }
+
     return ParseError{"unknown cmd: " + cmd};
 }
 
