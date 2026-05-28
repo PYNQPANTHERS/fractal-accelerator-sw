@@ -1,12 +1,5 @@
-"""Contract tests for the simulator.
+# Contract tests for the simulator.
 
-Every test exercises the full Python -> C++ -> Python round trip via the
-real subprocess. If the C++ binary isn't built, all tests skip (so a fresh
-clone doesn't see a wall of failures before someone has run cmake).
-
-Run from the repo root:
-    pytest tests/
-"""
 
 from __future__ import annotations
 
@@ -71,9 +64,7 @@ def test_palette_indices_in_range(default_mandelbrot):
 # ---------- correctness sanity ----------
 
 def test_mandelbrot_centre_tile_has_variety(default_mandelbrot):
-    """Tile 5 covers the middle of the image. It should contain a mix
-    of in-set pixels (band 15) and escape pixels (lower bands) — not a
-    single uniform colour."""
+
     payload = render_tile(default_mandelbrot, 5)
     indices = _unpack_nibbles(payload)
     distinct = len(set(indices))
@@ -139,7 +130,6 @@ def test_unknown_fractal_type_surfaces_as_sim_error():
 # ---------- determinism ----------
 
 def test_same_config_yields_same_bytes(default_mandelbrot):
-    """The sim is deterministic — same inputs, identical bytes."""
     a = render_tile(default_mandelbrot, 5)
     b = render_tile(default_mandelbrot, 5)
     assert a == b
