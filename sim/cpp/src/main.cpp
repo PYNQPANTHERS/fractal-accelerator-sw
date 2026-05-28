@@ -39,7 +39,7 @@ int main() {
                           << " zoom=" << c.zoom
                           << " type=" << c.fractal_type << std::endl;
                 compute_tile(tile_bufs[c.tile_id], c.tile_id,
-                             c.pan_x, c.pan_y, c.zoom,
+                             c.pan_x, c.pan_y, c.zoom, c.max_iter,
                              c.fractal_type, c.julia_c_real, c.julia_c_imag);
                 write_frame(MessageType::Tile,
                             static_cast<uint8_t>(c.tile_id),
@@ -57,7 +57,7 @@ int main() {
                 for (int tile_id = 0; tile_id < N_TILES; ++tile_id) {
                     threads.emplace_back([&, tile_id]() {
                         compute_tile(tile_bufs[tile_id], tile_id,
-                                     c.pan_x, c.pan_y, c.zoom,
+                                     c.pan_x, c.pan_y, c.zoom, c.max_iter,
                                      c.fractal_type,
                                      c.julia_c_real, c.julia_c_imag);
                     });

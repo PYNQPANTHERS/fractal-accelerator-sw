@@ -71,8 +71,17 @@ async def _render_and_stream(
     """
     result = scheduler.next_job()
     if result is None:
-        # Fix 1: wait for push() to fire job_available, not a fixed sleep.
-        await scheduler.job_available.wait()
+        # If something is pending but deferred (Performance mode's
+        # "other main waits 50ms" rule), retry after the defer window
+        # rather than sleeping on the event — no new push will fire.
+        if scheduler.has_pending():
+            # Re-check soon enough that deferred panels render snappily
+            # once the active panel goes idle, but not so often we burn
+            # CPU. 50ms is a good middle ground.
+            await asyncio.sleep(0.05)
+        else:
+            # Truly idle: wait for the next push to wake us.
+            await scheduler.job_available.wait()
         return
 
     # Fix 4: drop render if browser buffer is backed up.
@@ -81,7 +90,7 @@ async def _render_and_stream(
         return
 
     panel_id, job = result
-    log.debug("rendering panel=%d frame_seq=%d", panel_id, job.frame_seq)
+    log.info("rendering panel=%d frame_seq=%d", panel_id, job.frame_seq)
 
     async for tile_id, tile_bytes in render_image(job.config):
         frame = pack_tile_frame(
@@ -125,26 +134,32 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
             msg = parse_message(raw)
 
             if isinstance(msg, SetViewMessage):
+                prev = panel_state.get(msg.panel_id)
                 cfg = set_view_to_config(msg)
                 panel_state[msg.panel_id] = cfg
                 scheduler.push(msg.panel_id, cfg, msg.frame_seq)
 
-                # When Mandelbrot pans, c changes → also queue a Julia render.
-                # Fix 3: preserve the Julia panel's current zoom/pan rather
-                # than resetting to (0,0,zoom=0) on every Mandelbrot move.
+                # Mandelbrot pan changes Julia's c. Pure zoom doesn't:
+                # the crosshair stays on the same complex point, so no
+                # Julia re-render is needed. Skip the coupling push then
+                # — saves a 16-tile render the user can't see anyway.
                 if msg.panel_id == PANEL_MANDELBROT_MAIN:
-                    existing_julia = panel_state.get(PANEL_JULIA_MAIN, _default_julia)
-                    julia_cfg = RenderConfig(
-                        pan_x        = existing_julia.pan_x,
-                        pan_y        = existing_julia.pan_y,
-                        zoom         = existing_julia.zoom,
-                        fractal_type = "julia",
-                        julia_c_real = msg.pan_x,   # c = Mandelbrot centre
-                        julia_c_imag = msg.pan_y,
-                        max_iter     = existing_julia.max_iter,
-                    )
-                    panel_state[PANEL_JULIA_MAIN] = julia_cfg
-                    scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq)
+                    pan_changed = (prev is None
+                                   or prev.pan_x != cfg.pan_x
+                                   or prev.pan_y != cfg.pan_y)
+                    if pan_changed:
+                        existing_julia = panel_state.get(PANEL_JULIA_MAIN, _default_julia)
+                        julia_cfg = RenderConfig(
+                            pan_x        = existing_julia.pan_x,
+                            pan_y        = existing_julia.pan_y,
+                            zoom         = existing_julia.zoom,
+                            fractal_type = "julia",
+                            julia_c_real = msg.pan_x,   # c = Mandelbrot centre
+                            julia_c_imag = msg.pan_y,
+                            max_iter     = existing_julia.max_iter,
+                        )
+                        panel_state[PANEL_JULIA_MAIN] = julia_cfg
+                        scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq)
 
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)

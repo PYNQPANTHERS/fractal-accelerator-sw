@@ -28,7 +28,10 @@ from server.protocol import (
 )
 
 
-DEFER_MS = 50   # ms of inactivity on active panel before the other renders
+DEFER_MS = 250  # ms of inactivity on active panel before the other renders
+                # in Performance mode. Larger = active panel feels snappier
+                # because Julia coupling stops competing for the renderer
+                # while the user is still moving Mandelbrot.
 
 
 @dataclass
@@ -64,6 +67,10 @@ class Scheduler:
     def set_mode(self, mode: str) -> None:
         if mode in ("performance", "live_evolution"):
             self.mode = mode
+
+    def has_pending(self) -> bool:
+        """True if any job is queued, even if currently deferred."""
+        return bool(self._pending)
 
     # ── Output ────────────────────────────────────────────────────────────────
 
