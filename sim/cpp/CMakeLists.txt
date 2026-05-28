@@ -17,6 +17,7 @@ add_executable(fractal_sim
     src/main.cpp
     src/protocol.cpp
     src/response.cpp
+    src/iterate.cpp
 )
 
 target_include_directories(fractal_sim PRIVATE vendor)

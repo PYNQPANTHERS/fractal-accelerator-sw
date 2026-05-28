@@ -3,25 +3,21 @@
 // Long-running simulator binary. Reads JSON commands from stdin, writes
 // framed binary responses to stdout, logs diagnostics to stderr.
 
-#include <array>
-#include <cstddef>
 #include <iostream>
 #include <string>
 #include <variant>
 
+#include "iterate.hpp"
 #include "protocol.hpp"
 #include "response.hpp"
 
 using namespace fractal_sim;
 
-// One tile is 256x256 nibble-packed pixels = 32768 bytes.
-constexpr std::size_t TILE_BYTES = 256 * 256 / 2;
-
 int main() {
     std::cerr << "fractal_sim: ready" << std::endl;
 
-    // Placeholder payload — real iteration math arrives in commit 7.
-    std::array<std::byte, TILE_BYTES> placeholder{};
+    // One reusable tile-sized output buffer. compute_tile overwrites it fully.
+    TileBuffer tile_buf{};
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -39,10 +35,16 @@ int main() {
                           << " zoom=" << c.zoom
                           << " type=" << c.fractal_type
                           << std::endl;
+                compute_tile(tile_buf,
+                             c.tile_id,
+                             c.pan_x, c.pan_y,
+                             c.zoom,
+                             c.fractal_type,
+                             c.julia_c_real, c.julia_c_imag);
                 write_frame(MessageType::Tile,
                             static_cast<uint8_t>(c.tile_id),
-                            placeholder.data(),
-                            static_cast<uint32_t>(placeholder.size()));
+                            tile_buf.data(),
+                            static_cast<uint32_t>(tile_buf.size()));
             } else if constexpr (std::is_same_v<T, ParseError>) {
                 std::cerr << "fractal_sim: parse error: " << c.message << std::endl;
                 write_error(c.message);
