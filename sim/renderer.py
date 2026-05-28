@@ -11,9 +11,9 @@ swapped to a PynqDriver with minimal change.
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
-import os
 import struct
 import subprocess
 import threading
@@ -23,17 +23,18 @@ from sim.config import RenderConfig
 
 
 TILE_PIXELS = 256
-TILE_BYTES = TILE_PIXELS * TILE_PIXELS // 2   # 32768
+TILE_BYTES  = TILE_PIXELS * TILE_PIXELS // 2   # 32768
+TILES_PER_IMAGE = 16
 
 # Frame format from sim/cpp/src/response.hpp:
 #   byte 0    : message_type
 #   byte 1    : tile_id
 #   bytes 2-5 : payload length, little-endian uint32
-_HEADER_FMT = "<BBI"
+_HEADER_FMT  = "<BBI"
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)   # 6
 
-_MSG_TILE = 0x01
-_MSG_PONG = 0x02
+_MSG_TILE  = 0x01
+_MSG_PONG  = 0x02
 _MSG_ERROR = 0xFF
 
 _BINARY_PATH = Path(__file__).parent / "cpp" / "build" / "fractal_sim"
@@ -44,7 +45,7 @@ class SimError(RuntimeError):
 
 
 class _Sim:
-    """Holds the subprocess and a lock for synchronous request/response use."""
+    """Wraps the long-running C++ subprocess."""
 
     def __init__(self) -> None:
         if not _BINARY_PATH.exists():
@@ -60,33 +61,47 @@ class _Sim:
         )
         self._lock = threading.Lock()
 
-    def request(self, command: dict) -> tuple[int, int, bytes]:
-        """Send one command, return (message_type, tile_id, payload)."""
+    def _send(self, command: dict) -> None:
+        """Write one JSON command to the subprocess stdin. Caller holds lock."""
         line = (json.dumps(command) + "\n").encode("utf-8")
+        assert self._proc.stdin is not None
+        try:
+            self._proc.stdin.write(line)
+            self._proc.stdin.flush()
+        except BrokenPipeError as e:
+            raise SimError("sim subprocess closed stdin") from e
 
+    def _read_frame(self) -> tuple[int, int, bytes]:
+        """Read one framed response from stdout. Caller holds lock."""
+        assert self._proc.stdout is not None
+        header = self._proc.stdout.read(_HEADER_SIZE)
+        if len(header) < _HEADER_SIZE:
+            raise SimError("sim subprocess closed stdout before a complete header")
+        msg_type, tile_id, length = struct.unpack(_HEADER_FMT, header)
+        payload = self._proc.stdout.read(length) if length > 0 else b""
+        if len(payload) < length:
+            raise SimError(
+                f"sim stdout closed mid-payload ({len(payload)}/{length} bytes)"
+            )
+        return msg_type, tile_id, payload
+
+    def request(self, command: dict) -> tuple[int, int, bytes]:
+        """Send one command, read one response frame."""
         with self._lock:
-            assert self._proc.stdin is not None
-            assert self._proc.stdout is not None
+            self._send(command)
+            return self._read_frame()
 
-            try:
-                self._proc.stdin.write(line)
-                self._proc.stdin.flush()
-            except BrokenPipeError as e:
-                raise SimError("sim subprocess closed stdin") from e
+    def request_stream(self, command: dict, n_frames: int) -> Iterator[tuple[int, int, bytes]]:
+        """Send one command, read n_frames response frames.
 
-            header = self._proc.stdout.read(_HEADER_SIZE)
-            if len(header) < _HEADER_SIZE:
-                raise SimError("sim subprocess closed stdout before sending a header")
-
-            msg_type, tile_id, length = struct.unpack(_HEADER_FMT, header)
-            payload = self._proc.stdout.read(length) if length > 0 else b""
-            if len(payload) < length:
-                raise SimError(
-                    f"sim subprocess closed stdout mid-payload "
-                    f"({len(payload)}/{length} bytes)"
-                )
-
-            return msg_type, tile_id, payload
+        Holds the lock for the entire multi-frame sequence so no other
+        caller can interleave commands while we're reading responses.
+        Yields each frame as soon as it's received from the subprocess.
+        """
+        with self._lock:
+            self._send(command)
+            for _ in range(n_frames):
+                yield self._read_frame()
 
     def close(self) -> None:
         if self._proc.stdin and not self._proc.stdin.closed:
@@ -97,8 +112,7 @@ class _Sim:
             self._proc.kill()
 
 
-# Module-level singleton: one subprocess per Python process. The driver
-# and server will share it. atexit handles clean shutdown.
+# Module-level singleton. One subprocess per Python process.
 _sim_instance: _Sim | None = None
 _sim_instance_lock = threading.Lock()
 
@@ -113,35 +127,69 @@ def _get_sim() -> _Sim:
 
 
 def render_tile(config: RenderConfig, tile_id: int) -> bytes:
-    """Render one tile by calling out to the C++ simulator.
-
-    Returns 32768 bytes of nibble-packed 4-bit palette indices.
-    """
+    """Render one tile. Returns 32768 bytes of nibble-packed 4-bit indices."""
     if not 0 <= tile_id <= 15:
         raise ValueError(f"tile_id must be 0..15, got {tile_id}")
 
     sim = _get_sim()
-    msg_type, returned_tile_id, payload = sim.request({
-        "cmd": "render_tile",
-        "tile_id": tile_id,
-        "pan_x": config.pan_x,
-        "pan_y": config.pan_y,
-        "zoom": config.zoom,
+    msg_type, returned_id, payload = sim.request({
+        "cmd":          "render_tile",
+        "tile_id":      tile_id,
+        "pan_x":        config.pan_x,
+        "pan_y":        config.pan_y,
+        "zoom":         config.zoom,
         "fractal_type": config.fractal_type,
         "julia_c_real": config.julia_c_real,
         "julia_c_imag": config.julia_c_imag,
-        "max_iter": config.max_iter,
+        "max_iter":     config.max_iter,
     })
-
     if msg_type == _MSG_ERROR:
         raise SimError(payload.decode("utf-8", errors="replace"))
     if msg_type != _MSG_TILE:
-        raise SimError(f"expected tile response, got message_type {msg_type:#x}")
-    if returned_tile_id != tile_id:
-        raise SimError(f"tile_id mismatch: asked {tile_id}, got {returned_tile_id}")
+        raise SimError(f"expected tile, got {msg_type:#x}")
+    if returned_id != tile_id:
+        raise SimError(f"tile_id mismatch: sent {tile_id}, got {returned_id}")
     if len(payload) != TILE_BYTES:
         raise SimError(f"expected {TILE_BYTES} bytes, got {len(payload)}")
     return payload
+
+
+async def render_image(config: RenderConfig):
+    """Render all 16 tiles in one command, yielding (tile_id, bytes) per tile.
+
+    One round trip to the C++ binary (render_image command). The binary
+    computes all 16 tiles in parallel threads, then streams each frame back.
+    All frames are collected in one asyncio.to_thread call — no per-frame
+    queue overhead — then yielded synchronously. The event loop is free for
+    the full duration of the C++ compute.
+    """
+    cmd = {
+        "cmd":          "render_image",
+        "pan_x":        config.pan_x,
+        "pan_y":        config.pan_y,
+        "zoom":         config.zoom,
+        "fractal_type": config.fractal_type,
+        "julia_c_real": config.julia_c_real,
+        "julia_c_imag": config.julia_c_imag,
+        "max_iter":     config.max_iter,
+    }
+    sim = _get_sim()
+
+    # Collect all 16 frames in a single thread call. The C++ side has already
+    # parallelised the compute — by the time request_stream returns the first
+    # frame, all tiles are computed and sitting in write_frame buffers.
+    frames = await asyncio.to_thread(
+        lambda: list(sim.request_stream(cmd, TILES_PER_IMAGE))
+    )
+
+    for msg_type, tile_id, payload in frames:
+        if msg_type == _MSG_ERROR:
+            raise SimError(payload.decode("utf-8", errors="replace"))
+        if msg_type != _MSG_TILE:
+            raise SimError(f"expected tile, got {msg_type:#x}")
+        if len(payload) != TILE_BYTES:
+            raise SimError(f"expected {TILE_BYTES} bytes, got {len(payload)}")
+        yield tile_id, payload
 
 
 def ping() -> None:
@@ -149,4 +197,4 @@ def ping() -> None:
     sim = _get_sim()
     msg_type, _, _ = sim.request({"cmd": "ping"})
     if msg_type != _MSG_PONG:
-        raise SimError(f"expected pong, got message_type {msg_type:#x}")
+        raise SimError(f"expected pong, got {msg_type:#x}")

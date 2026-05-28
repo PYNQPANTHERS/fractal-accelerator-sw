@@ -25,13 +25,26 @@ struct RenderTile {
     int max_iter;
 };
 
-struct Ping {};                  // Cheap "are you alive" probe.
+// Render all 16 tiles in one command. The binary sends 16 Tile frames in
+// order 0..15, each flushed immediately — mirrors how the real PL streams
+// tiles as its cores complete them.
+struct RenderImage {
+    double pan_x;
+    double pan_y;
+    int zoom;
+    std::string fractal_type;
+    double julia_c_real;
+    double julia_c_imag;
+    int max_iter;
+};
+
+struct Ping {};
 
 struct ParseError {
     std::string message;
 };
 
-using Command = std::variant<RenderTile, Ping, ParseError>;
+using Command = std::variant<RenderTile, RenderImage, Ping, ParseError>;
 
 // Parse one JSON line into a Command. Returns ParseError on any failure
 // (invalid JSON, missing fields, unknown cmd, wrong field types).

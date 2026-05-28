@@ -19,6 +19,10 @@ PS schedules 2 main jobs (2 main  set panels )  at different priorities -- possi
 
 will prototype with some sort of simulator that can parallel the hardware / PS dev we want to do
 
+# main jupyter driver
+
+i would say this has to be done in cpp, for sending fast from arm. 
+
 ## possible  Layout 
 this can change if better naming / splits 
 
