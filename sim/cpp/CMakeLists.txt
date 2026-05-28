@@ -16,6 +16,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 add_executable(fractal_sim
     src/main.cpp
     src/protocol.cpp
+    src/response.cpp
 )
 
 target_include_directories(fractal_sim PRIVATE vendor)
