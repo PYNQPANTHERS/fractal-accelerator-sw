@@ -56,10 +56,22 @@ class Scheduler:
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
-    def push(self, panel_id: int, config: RenderConfig, frame_seq: int) -> None:
-        """Record the latest config for a panel. Overwrites any previous pending."""
+    def push(self,
+             panel_id: int,
+             config: RenderConfig,
+             frame_seq: int,
+             mark_active: bool = True) -> None:
+        """Record the latest config for a panel. Overwrites any previous pending.
+
+        mark_active=False is used for system-derived pushes (e.g. the
+        server-side Julia coupling triggered by a Mandelbrot pan). Those
+        must not steal "active panel" status from the panel the user is
+        actually interacting with — otherwise Performance mode keeps
+        re-deferring the user's own panel because every stream-commit's
+        coupling push resets the idle timer.
+        """
         self._pending[panel_id] = PendingJob(config=config, frame_seq=frame_seq)
-        if panel_id in (PANEL_MANDELBROT_MAIN, PANEL_JULIA_MAIN):
+        if mark_active and panel_id in (PANEL_MANDELBROT_MAIN, PANEL_JULIA_MAIN):
             self._active_panel = panel_id
             self._last_input_time = time.monotonic()
         self.job_available.set()

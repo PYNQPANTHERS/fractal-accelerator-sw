@@ -54,15 +54,18 @@ interface DragSession {
   startView: ViewState
   marginX: number
   marginY: number
-  /** Pixel offset that's already been "consumed" by a streamed render.
-   *  Subsequent pointer movements compute their world delta relative
-   *  to this baseline, not the original drag start. */
+  /** Cursor position (relative to drag origin) when the *currently in
+   *  flight* render request was sent. The baseline used for the
+   *  preview transform once that render lands. We rebase to *sent*
+   *  position, not current cursor — the canvas bitmap shows the view
+   *  that corresponds to where the cursor was at send time. */
+  sentMx: number
+  sentMy: number
+  /** Cursor position used as transform baseline right now. Updated to
+   *  sentMx/sentMy when notifyFrameApplied fires. */
   baselineMx: number
   baselineMy: number
-  /** The view that's currently painted in the canvas (after the most
-   *  recent staging→display swap), used as the origin for new transforms. */
-  appliedView: ViewState
-  /** Latest cursor position, used to re-baseline on frame apply. */
+  /** Latest cursor position from the most recent pointermove. */
   lastMx: number
   lastMy: number
 }
@@ -70,8 +73,8 @@ interface DragSession {
 export function useViewState(
   initial: ViewState,
   onCommit: (next: ViewState) => void,
-  /** ms between mid-drag stream commits. <=0 disables streaming. */
-  streamIntervalMs: number = 0,
+  /** If true, stream renders mid-drag instead of only on release. */
+  streamDuringDrag: boolean = false,
 ): ViewController {
   const [view, setView] = useState<ViewState>(initial)
   const viewRef = useRef(view)
@@ -79,7 +82,14 @@ export function useViewState(
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const wheelAcc = useRef(0)
   const drag = useRef<DragSession | null>(null)
-  const lastStream = useRef(0)
+  // True when a streamed render is in flight (sent but final tile not
+  // yet received). Used to gate the next stream-commit so we never
+  // pipeline requests faster than the server can drain them — that's
+  // what was causing the latency to grow and the canvas to fall behind.
+  const inFlight = useRef(false)
+  // If a new view appears while a render is in flight, stash it here.
+  // We send it as soon as the in-flight render completes.
+  const pending = useRef<ViewState | null>(null)
 
   const writeTransform = useCallback((x: number, y: number) => {
     const el = canvasElRef.current
@@ -112,23 +122,48 @@ export function useViewState(
   }, [])
 
   /**
-   * Painter calls this each time a complete frame swaps in.
-   * If a drag is in progress, advance the visual baseline to the
-   * current cursor so the next pointermove writes a transform of zero
-   * (or a tiny delta), avoiding the snap that would otherwise happen.
-   * Outside a drag we just clear any leftover transform.
+   * Painter calls this each time a complete frame swaps in. Three jobs:
+   *  1. Rebase the visual baseline to the cursor position at the
+   *     moment the render was *requested* — that's the position the
+   *     newly-painted bitmap actually shows. (Not the current cursor:
+   *     the cursor moved during the render. Rebasing to "now" would
+   *     snap the canvas backward by that distance.)
+   *  2. Apply the residual transform (cursor-now − cursor-at-send) so
+   *     the canvas visually catches up to where the user actually is.
+   *     No "back to 0" snap.
+   *  3. Flush any pending stream-commit that was held back while a
+   *     render was in flight. Backpressure: at most one render queued.
    */
   const notifyFrameApplied = useCallback(() => {
+    inFlight.current = false
     const sess = drag.current
     const el = canvasElRef.current
-    if (!sess) {
-      if (el) el.style.transform = ''
-      return
+    if (sess) {
+      sess.baselineMx = sess.sentMx
+      sess.baselineMy = sess.sentMy
+      if (el) {
+        const tx = sess.lastMx - sess.baselineMx
+        const ty = sess.lastMy - sess.baselineMy
+        el.style.transform =
+          tx === 0 && ty === 0 ? '' : `translate(${tx}px, ${ty}px)`
+      }
+    } else if (el) {
+      el.style.transform = ''
     }
-    sess.baselineMx = sess.lastMx
-    sess.baselineMy = sess.lastMy
-    if (el) el.style.transform = ''
-  }, [])
+
+    // Flush a stashed view if one accumulated during the in-flight render.
+    if (pending.current) {
+      const next = pending.current
+      pending.current = null
+      inFlight.current = true
+      if (sess) {
+        sess.sentMx = sess.lastMx
+        sess.sentMy = sess.lastMy
+      }
+      viewRef.current = next
+      onCommit(next)
+    }
+  }, [onCommit])
 
   const bind = useGesture(
     {
@@ -145,15 +180,15 @@ export function useViewState(
         }
         drag.current = {
           startView: viewRef.current,
-          appliedView: viewRef.current,
           marginX,
           marginY,
+          sentMx: 0,
+          sentMy: 0,
           baselineMx: 0,
           baselineMy: 0,
           lastMx: 0,
           lastMy: 0,
         }
-        lastStream.current = performance.now()
       },
       onDrag: ({ movement: [mx, my], last }) => {
         const sess = drag.current
@@ -175,21 +210,28 @@ export function useViewState(
 
         if (last) {
           drag.current = null
-          commit(next)
+          if (inFlight.current) {
+            pending.current = next
+            setView(next)
+            viewRef.current = next
+          } else {
+            inFlight.current = true
+            commit(next)
+          }
           return
         }
 
-        // Preview transform is measured from the *applied* origin, not
-        // the drag start. When a streamed render lands, baselineMx/My
-        // advance to the current cursor so the next transform is small
-        // (delta since apply), and the canvas pixels showing the
-        // applied view stay aligned.
         writeTransform(mx - sess.baselineMx, my - sess.baselineMy)
 
-        if (streamIntervalMs <= 0) return
-        const now = performance.now()
-        if (now - lastStream.current >= streamIntervalMs) {
-          lastStream.current = now
+        if (!streamDuringDrag) return
+        // Backpressure: only send if the previous render has finished;
+        // otherwise keep the latest view stashed (last-write-wins).
+        if (inFlight.current) {
+          pending.current = next
+        } else {
+          inFlight.current = true
+          sess.sentMx = mx
+          sess.sentMy = my
           viewRef.current = next
           onCommit(next)
         }
@@ -207,7 +249,15 @@ export function useViewState(
 
           // Centre-anchored: the crosshair (= panel centre = Julia's c
           // for the Mandelbrot panel) must not drift on zoom.
-          commit({ panX: cur.panX, panY: cur.panY, zoom: nextZoom })
+          const next = { panX: cur.panX, panY: cur.panY, zoom: nextZoom }
+          setView(next)
+          viewRef.current = next
+          if (inFlight.current) {
+            pending.current = next
+          } else {
+            inFlight.current = true
+            onCommit(next)
+          }
         }
       },
     },

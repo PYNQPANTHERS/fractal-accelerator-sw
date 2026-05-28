@@ -159,7 +159,8 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                             max_iter     = existing_julia.max_iter,
                         )
                         panel_state[PANEL_JULIA_MAIN] = julia_cfg
-                        scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq)
+                        scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq,
+                                       mark_active=False)
 
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)
