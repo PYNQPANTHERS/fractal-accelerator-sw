@@ -13,7 +13,8 @@ ie python in binary mode
 import argparse
 import sys
 
-from sim.renderer import RenderConfig, render_tile
+from sim.config import RenderConfig
+from sim.renderer import render_tile
 
 
 def main() -> None:
