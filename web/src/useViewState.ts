@@ -116,18 +116,22 @@ export function useViewState(
   const writeTransform = useCallback((x: number, y: number) => {
     const el = canvasElRef.current
     if (!el) return
-    if (x === 0 && y === 0) {
-      el.style.transform = ''
-      return
-    }
     const sess = drag.current
     if (sess) {
       const cx = clamp(x, -sess.marginX, sess.marginX)
       const cy = clamp(y, -sess.marginY, sess.marginY)
+      if (cx === 0 && cy === 0) {
+        el.style.transform = ''
+        return
+      }
       el.style.transform = `translate(${cx}px, ${cy}px)`
-    } else {
-      el.style.transform = `translate(${x}px, ${y}px)`
+      return
     }
+    if (x === 0 && y === 0) {
+      el.style.transform = ''
+      return
+    }
+    el.style.transform = `translate(${x}px, ${y}px)`
   }, [])
 
   const commit = useCallback(
@@ -187,12 +191,7 @@ export function useViewState(
       // World may have advanced further; transform shows the gap.
       sess.baselineX = sess.sentX
       sess.baselineY = sess.sentY
-      if (el) {
-        const tx = sess.worldX - sess.baselineX
-        const ty = sess.worldY - sess.baselineY
-        el.style.transform =
-          tx === 0 && ty === 0 ? '' : `translate(${tx}px, ${ty}px)`
-      }
+      writeTransform(sess.worldX - sess.baselineX, sess.worldY - sess.baselineY)
     } else if (el) {
       el.style.transform = ''
     }
@@ -229,7 +228,7 @@ export function useViewState(
     // tiles land, the cursor is likely there and we swap atomically
     // instead of waiting for a fresh render after the user crosses
     // into uncharted territory.
-    if (!sess) return
+    if (!sess || CANVAS_MARGIN_FRAC <= 0) return
     const speed = Math.hypot(sess.vx, sess.vy)
     if (speed < PREFETCH_MIN_SPEED_PX_PER_MS) return
     const predX = sess.worldX + sess.vx * PREFETCH_LOOKAHEAD_MS
@@ -246,7 +245,7 @@ export function useViewState(
     sess.sentY = predY
     viewRef.current = speculative
     onCommit(speculative, 'active')
-  }, [onCommit])
+  }, [onCommit, writeTransform])
 
   const bind = useGesture(
     {

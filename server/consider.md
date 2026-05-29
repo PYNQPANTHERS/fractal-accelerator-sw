@@ -19,3 +19,11 @@ live evolution panning still seems smoother thanperofrmance whihc is obviosuly w
 
  ---
  performance mode seems to be twice as slow as live evolution latency wise, when I would expectt eh opposite, should be the same thing, just julia renders after we stop panning --- why is that, is it not just a schedueling difference? -- look into the performance implementation 
+
+ ----
+ what about : object pooling and gpu instancing
+
+
+ -----
+
+ Big picture: scheduling alone cannot make one Mandelbrot frame cheaper. It can only stop Julia from blocking Mandelbrot and keep the renderer fed. To push Mandelbrot FPS beyond that, the real options are active-drag lower work, like lower max_iter/preview, or FPGA-side tile/sixteenth priority with cancellation of stale background work.

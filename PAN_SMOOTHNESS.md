@@ -282,6 +282,29 @@ Tunables at the top of `useViewState.ts`:
 - `PREFETCH_LOOKAHEAD_MS` (150): how far ahead to predict. Should
   roughly match observed render latency.
 
+## v13 — 4×4 no-margin jitter / black-border fix
+
+**Reported**: after returning to 4×4, pan felt jumpier again and could
+show black / unrendered border at the viewport edge during frame swaps.
+
+**Cause**: pointermove transforms were clamped by `writeTransform()`,
+but `notifyFrameApplied()` applied its residual transform directly.
+With `CANVAS_MARGIN_FRAC = 0`, that bypass could still translate the
+canvas outside the rendered 1024×1024 image after a frame landed.
+
+Predictive prefetch also made less sense in 4×4 mode: with no rendered
+pan margin, speculative swaps can expose the fact that the content has
+no extra pixels to slide into.
+
+**Change**:
+
+- Route frame-applied residual transforms through `writeTransform()`,
+  so drag and frame-swap paths share the same clamp.
+- Disable predictive prefetch when `CANVAS_MARGIN_FRAC <= 0`.
+
+**Effect**: reduced visible jitter and stopped the black/unrendered
+border from appearing during 4×4 pan.
+
 ## What to try next if v12 still feels off
 
 - Drop `permessage-deflate` on the WebSocket — fractal payload is
