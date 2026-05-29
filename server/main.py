@@ -52,6 +52,20 @@ def _browser_can_receive(ws: WebSocketServerProtocol) -> bool:
         return True  # if we can't read the buffer size, assume OK
 
 
+async def _wait_for_scheduler(scheduler: Scheduler) -> None:
+    """Wait until a pending job may be renderable, or new input arrives."""
+    timeout = scheduler.seconds_until_next_job()
+    if timeout is None:
+        await scheduler.job_available.wait()
+        return
+    if timeout <= 0:
+        return
+    try:
+        await asyncio.wait_for(scheduler.job_available.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+
+
 async def _render_and_stream(
     ws: WebSocketServerProtocol,
     scheduler: Scheduler,
@@ -72,17 +86,10 @@ async def _render_and_stream(
     """
     result = scheduler.next_job()
     if result is None:
-        # If something is pending but deferred (Performance mode's
-        # "other main waits 50ms" rule), retry after the defer window
-        # rather than sleeping on the event — no new push will fire.
-        if scheduler.has_pending():
-            # Re-check soon enough that deferred panels render snappily
-            # once the active panel goes idle, but not so often we burn
-            # CPU. 50ms is a good middle ground.
-            await asyncio.sleep(0.05)
-        else:
-            # Truly idle: wait for the next push to wake us.
-            await scheduler.job_available.wait()
+        # Pending work may be deferred by Performance mode, but a fresh
+        # active-panel push should wake us immediately instead of paying
+        # a blind polling sleep on every Mandelbrot frame.
+        await _wait_for_scheduler(scheduler)
         return
 
     # Fix 4: drop render if browser buffer is backed up.

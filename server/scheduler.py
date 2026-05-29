@@ -79,10 +79,32 @@ class Scheduler:
     def set_mode(self, mode: str) -> None:
         if mode in ("performance", "live_evolution"):
             self.mode = mode
+            # A mode switch can make already-pending work eligible
+            # immediately, so wake the render loop even without a new view.
+            self.job_available.set()
 
     def has_pending(self) -> bool:
         """True if any job is queued, even if currently deferred."""
         return bool(self._pending)
+
+    def seconds_until_next_job(self) -> Optional[float]:
+        """Seconds until the current pending set can produce work.
+
+        Returns:
+            None  — no work is pending; wait indefinitely for a push.
+            0.0   — a job is ready now.
+            >0.0  — Performance mode has only the non-active main pending,
+                    and it is still inside the defer window.
+        """
+        if not self._pending:
+            return None
+        if self._pick_panel() is not None:
+            return 0.0
+        if self.mode != "performance":
+            return 0.0
+
+        idle_ms = (time.monotonic() - self._last_input_time) * 1000
+        return max(0.0, (DEFER_MS - idle_ms) / 1000)
 
     # ── Output ────────────────────────────────────────────────────────────────
 
