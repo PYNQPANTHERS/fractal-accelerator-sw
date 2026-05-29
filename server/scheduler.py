@@ -78,6 +78,12 @@ class Scheduler:
             # immediately, so wake the render loop even without a new view.
             self.job_available.set()
 
+    def cancel(self, *panel_ids: int) -> None:
+        """Drop pending work for the given panels."""
+        for panel_id in panel_ids:
+            self._pending.pop(panel_id, None)
+        self.job_available.set()
+
     def has_pending(self) -> bool:
         """True if any job is queued."""
         return bool(self._pending)

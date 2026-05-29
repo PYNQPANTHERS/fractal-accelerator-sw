@@ -18,6 +18,7 @@
  *                       julia_c_real?, julia_c_imag?, max_iter?,
  *                       interaction?: "idle" | "active" | "final" }
  *   { type: "set_mode", mode: "performance" | "live_evolution" }
+ *   { type: "set_minimaps", enabled, frame_seq }
  */
 
 export const HEADER_BYTES = 16
@@ -152,3 +153,4 @@ export type ClientMessage =
       interaction?: InteractionPhase
     }
   | { type: 'set_mode'; mode: 'performance' | 'live_evolution' }
+  | { type: 'set_minimaps'; enabled: boolean; frame_seq: number }

@@ -4,6 +4,7 @@ import asyncio
 
 from server.main import _wait_for_scheduler
 from server.protocol import PANEL_JULIA_MAIN, PANEL_MANDELBROT_MAIN
+from server.protocol import PANEL_JULIA_MINIMAP, PANEL_MANDELBROT_MINIMAP
 from server.scheduler import Scheduler
 from sim.config import RenderConfig
 
@@ -100,3 +101,23 @@ def test_live_evolution_can_render_julia_during_active_drag():
         mark_active=False,
     )
     assert scheduler.next_job()[0] == PANEL_JULIA_MAIN
+
+
+def test_cancel_drops_pending_minimap_work():
+    scheduler = Scheduler()
+    scheduler.push(
+        PANEL_MANDELBROT_MINIMAP,
+        _cfg("mandelbrot"),
+        frame_seq=1,
+        mark_active=False,
+    )
+    scheduler.push(
+        PANEL_JULIA_MINIMAP,
+        _cfg("julia"),
+        frame_seq=1,
+        mark_active=False,
+    )
+
+    scheduler.cancel(PANEL_MANDELBROT_MINIMAP, PANEL_JULIA_MINIMAP)
+
+    assert scheduler.next_job() is None

@@ -11,10 +11,12 @@
 
 export interface DebugFlags {
   fpsOverlay: boolean
+  minimaps: boolean
 }
 
 export const DEFAULT_DEBUG_FLAGS: DebugFlags = {
   fpsOverlay: false,
+  minimaps: true,
 }
 
 interface Props {
@@ -53,6 +55,16 @@ export function DebugPanel({ open, onClose, flags, onChange }: Props) {
             value={flags.fpsOverlay}
             onChange={(v) => set('fpsOverlay', v)}
             hint="Show paint / move / frame rates in the corner."
+          />
+        </section>
+
+        <section className="debug-section">
+          <h3>Rendering</h3>
+          <Toggle
+            label="Minimaps"
+            value={flags.minimaps}
+            onChange={(v) => set('minimaps', v)}
+            hint="Render overview panels as low-priority sim / FPGA work."
           />
         </section>
       </aside>

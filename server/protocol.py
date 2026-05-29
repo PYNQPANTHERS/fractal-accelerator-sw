@@ -73,11 +73,18 @@ class SetModeMessage:
 
 
 @dataclass
+class SetMinimapsMessage:
+    """Browser toggled minimap rendering."""
+    enabled: bool
+    frame_seq: int = 0
+
+
+@dataclass
 class UnknownMessage:
     raw: dict[str, Any]
 
 
-ParsedMessage = SetViewMessage | SetModeMessage | UnknownMessage
+ParsedMessage = SetViewMessage | SetModeMessage | SetMinimapsMessage | UnknownMessage
 
 
 def parse_message(text: str) -> ParsedMessage:
@@ -118,6 +125,15 @@ def parse_message(text: str) -> ParsedMessage:
         if mode in ("performance", "live_evolution"):
             return SetModeMessage(mode=mode)
         return UnknownMessage(raw=data)
+
+    if msg_type == "set_minimaps":
+        try:
+            return SetMinimapsMessage(
+                enabled=bool(data.get("enabled", True)),
+                frame_seq=int(data.get("frame_seq", 0)),
+            )
+        except (ValueError, TypeError):
+            return UnknownMessage(raw=data)
 
     return UnknownMessage(raw=data)
 

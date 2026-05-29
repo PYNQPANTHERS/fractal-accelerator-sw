@@ -1,8 +1,8 @@
 /**
  * Top-level layout for the fractal explorer.
  *
- * Two full-bleed viewports (Mandelbrot | Julia) with minimaps overlaid
- * in the lower-left of each one. Each viewport owns a 1024×1024 canvas
+ * Two full-bleed viewports (Mandelbrot | Julia) with optional minimaps
+ * overlaid in the lower-left. Each viewport owns a 1024×1024 canvas
  * driven by a TilePainter; incoming binary frames are routed to the
  * painter whose panel id matches.
  *
@@ -139,9 +139,29 @@ export default function App() {
     commitJulia(JULIA_INITIAL)
   }, [state, commitMandelbrot, commitJulia])
 
+  useEffect(() => {
+    if (state !== 'open' || debugFlags.minimaps) return
+    sendRef.current({
+      type: 'set_minimaps',
+      enabled: false,
+      frame_seq: nextSeq(),
+    })
+  }, [state, debugFlags.minimaps, nextSeq])
+
   const onModeChange = (next: Mode) => {
     setMode(next)
     sendRef.current({ type: 'set_mode', mode: next })
+  }
+
+  const onDebugFlagsChange = (next: DebugFlags) => {
+    if (next.minimaps !== debugFlags.minimaps) {
+      sendRef.current({
+        type: 'set_minimaps',
+        enabled: next.minimaps,
+        frame_seq: nextSeq(),
+      })
+    }
+    setDebugFlags(next)
   }
 
   // Frame-applied callbacks pipe through fps.notePaint so the overlay
@@ -195,6 +215,29 @@ export default function App() {
             Pynq<em>Zoom</em>
           </h1>
         </div>
+        <div
+          className={`mode-toggle mode-toggle-${mode}`}
+          role="tablist"
+          aria-label="Render mode"
+        >
+          <span className="mode-toggle-indicator" aria-hidden="true" />
+          <button
+            className={mode === 'performance' ? 'active' : ''}
+            onClick={() => onModeChange('performance')}
+            role="tab"
+            aria-selected={mode === 'performance'}
+          >
+            Performance
+          </button>
+          <button
+            className={mode === 'live_evolution' ? 'active' : ''}
+            onClick={() => onModeChange('live_evolution')}
+            role="tab"
+            aria-selected={mode === 'live_evolution'}
+          >
+            Live Evolution
+          </button>
+        </div>
         <span className="header-meta">
           <span className={`status status-${state}`}>{state}</span>
           <span className="sep">/</span>
@@ -203,21 +246,6 @@ export default function App() {
       </header>
 
       <main className="viewports">
-        <div className="mode-toggle" role="tablist" aria-label="Render mode">
-          <button
-            className={mode === 'performance' ? 'active' : ''}
-            onClick={() => onModeChange('performance')}
-          >
-            Performance
-          </button>
-          <button
-            className={mode === 'live_evolution' ? 'active' : ''}
-            onClick={() => onModeChange('live_evolution')}
-          >
-            Live Evolution
-          </button>
-        </div>
-
         <Viewport
           name="Mandelbrot"
           view={mandelbrotView.view}
@@ -225,6 +253,8 @@ export default function App() {
           showCrosshair
           canvasRef={registerMandelbrotMain}
           minimapCanvasRef={registerMandelbrotMini}
+          minimapCenterX={MANDELBROT_INITIAL.panX}
+          showMinimap={debugFlags.minimaps}
           formatCoord={formatMandelbrotCoord}
         />
         <Viewport
@@ -233,6 +263,8 @@ export default function App() {
           bind={juliaView.bind}
           canvasRef={registerJuliaMain}
           minimapCanvasRef={registerJuliaMini}
+          minimapCenterX={JULIA_INITIAL.panX}
+          showMinimap={debugFlags.minimaps}
           formatCoord={(v) =>
             `c = ${formatNumber(juliaCRef.current.real)} + ${formatNumber(juliaCRef.current.imag)}i  ·  ×${zoomLabel(v.zoom)}`
           }
@@ -253,7 +285,7 @@ export default function App() {
         open={debugOpen}
         onClose={() => setDebugOpen(false)}
         flags={debugFlags}
-        onChange={setDebugFlags}
+        onChange={onDebugFlagsChange}
       />
     </div>
   )
@@ -298,6 +330,8 @@ function Viewport({
   showCrosshair = false,
   canvasRef,
   minimapCanvasRef,
+  minimapCenterX,
+  showMinimap,
   formatCoord,
 }: {
   name: string
@@ -306,6 +340,8 @@ function Viewport({
   showCrosshair?: boolean
   canvasRef: (canvas: HTMLCanvasElement | null) => void
   minimapCanvasRef: (canvas: HTMLCanvasElement | null) => void
+  minimapCenterX: number
+  showMinimap: boolean
   formatCoord: (v: ViewState) => string
 }) {
   return (
@@ -320,32 +356,40 @@ function Viewport({
         {name}
       </div>
       {showCrosshair && <div className="viewport-crosshair" />}
-      <div className="minimap" role="img" aria-label={`${name} minimap`}>
-        <canvas
-          className="minimap-canvas"
-          width={IMAGE_PX}
-          height={IMAGE_PX}
-          ref={minimapCanvasRef}
-        />
-        <div
-          className="minimap-viewrect"
-          style={viewRectStyle(view)}
-        />
-        <span className="minimap-label">{name}</span>
-      </div>
+      {showMinimap && (
+        <div className="minimap" role="img" aria-label={`${name} minimap`}>
+          <canvas
+            className="minimap-canvas"
+            width={IMAGE_PX}
+            height={IMAGE_PX}
+            ref={minimapCanvasRef}
+          />
+          <div
+            className="minimap-viewrect"
+            style={viewRectStyle(view, minimapCenterX)}
+          />
+          <span className="minimap-label">{name}</span>
+        </div>
+      )}
     </section>
   )
 }
 
-function viewRectStyle(view: ViewState): React.CSSProperties {
-  // Minimap shows zoom=0 (window 4.0 wide, centred at (0,0) for julia, (-0.5,0) for mandel).
+function viewRectStyle(
+  view: ViewState,
+  minimapCenterX: number,
+): React.CSSProperties {
+  // Minimap shows zoom=0 (window 4.0 wide). Mandelbrot and Julia use
+  // different canonical centres, so the view rectangle takes that centre
+  // from the owning viewport.
   // The viewrect represents the visible region at the current zoom/pan.
   // We approximate by scaling the rect to a fraction of the minimap.
   const minimapWindow = 4.0
   const visibleWindow = 4.0 / Math.pow(2, view.zoom)
   const size = (visibleWindow / minimapWindow) * 100
-  // Centre the rect on the pan position relative to the minimap centre (0,0).
-  const left = 50 + ((view.panX - (-0.5)) / minimapWindow) * 100 - size / 2
+  // Centre the rect on the pan position relative to the minimap centre.
+  const left =
+    50 + ((view.panX - minimapCenterX) / minimapWindow) * 100 - size / 2
   const top = 50 + (view.panY / minimapWindow) * 100 - size / 2
   return {
     left: `${left}%`,

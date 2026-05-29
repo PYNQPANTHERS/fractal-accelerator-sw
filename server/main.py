@@ -26,6 +26,7 @@ from server.protocol import (
     set_view_to_config,
     SetViewMessage,
     SetModeMessage,
+    SetMinimapsMessage,
     UnknownMessage,
     PANEL_MANDELBROT_MAIN,
     PANEL_JULIA_MAIN,
@@ -42,6 +43,41 @@ PORT = int(os.environ.get("SERVER_PORT", "8765"))
 # Maximum bytes allowed in the WebSocket send buffer before we consider
 # the browser too slow and drop the current render.
 _MAX_SEND_BUFFER = 256 * 1024   # 256 KB — about 8 tiles worth
+_MINIMAP_MAX_ITER = 256
+
+
+def _mandelbrot_minimap_config() -> RenderConfig:
+    return RenderConfig(
+        pan_x=-0.5,
+        pan_y=0.0,
+        zoom=0,
+        fractal_type="mandelbrot",
+        max_iter=_MINIMAP_MAX_ITER,
+    )
+
+
+def _julia_minimap_config(source: RenderConfig) -> RenderConfig:
+    return RenderConfig(
+        pan_x=0.0,
+        pan_y=0.0,
+        zoom=0,
+        fractal_type="julia",
+        julia_c_real=source.julia_c_real,
+        julia_c_imag=source.julia_c_imag,
+        max_iter=_MINIMAP_MAX_ITER,
+        preview=source.preview,
+    )
+
+
+def _julia_minimap_needs_render(
+    existing: RenderConfig,
+    source: RenderConfig,
+) -> bool:
+    return (
+        existing.julia_c_real != source.julia_c_real
+        or existing.julia_c_imag != source.julia_c_imag
+        or (existing.preview and not source.preview)
+    )
 
 
 def _browser_can_receive(ws: WebSocketServerProtocol) -> bool:
@@ -118,28 +154,39 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
     """Handle one browser connection."""
     log.info("browser connected from %s", ws.remote_address)
     scheduler = Scheduler()
+    minimaps_enabled = True
 
     # Fix 3 — Per-panel state: track the last known config for each panel
     # so we can preserve Julia zoom/pan across Mandelbrot panning.
     panel_state: dict[int, RenderConfig] = {}
 
+    def queue_minimap(
+        panel_id: int,
+        config: RenderConfig,
+        frame_seq: int,
+    ) -> None:
+        panel_state[panel_id] = config
+        if minimaps_enabled:
+            scheduler.push(panel_id, config, frame_seq, mark_active=False)
+
     # Seed minimaps with default configs so they render on connect.
     _default_mandelbrot = RenderConfig(
-        pan_x=0.0, pan_y=0.0, zoom=0, fractal_type="mandelbrot"
+        pan_x=-0.5, pan_y=0.0, zoom=0, fractal_type="mandelbrot"
     )
     _default_julia = RenderConfig(
         pan_x=0.0, pan_y=0.0, zoom=0, fractal_type="julia",
         julia_c_real=-0.7, julia_c_imag=0.27,
     )
+    _default_mandelbrot_minimap = _mandelbrot_minimap_config()
+    _default_julia_minimap = _julia_minimap_config(_default_julia)
     panel_state[PANEL_MANDELBROT_MAIN]    = _default_mandelbrot
     panel_state[PANEL_JULIA_MAIN]         = _default_julia
-    panel_state[PANEL_MANDELBROT_MINIMAP] = _default_mandelbrot
-    panel_state[PANEL_JULIA_MINIMAP]      = _default_julia
-
-    scheduler.push(PANEL_MANDELBROT_MINIMAP, _default_mandelbrot, frame_seq=0)
-    scheduler.push(PANEL_JULIA_MINIMAP,      _default_julia,       frame_seq=0)
+    queue_minimap(PANEL_MANDELBROT_MINIMAP, _default_mandelbrot_minimap, frame_seq=0)
+    queue_minimap(PANEL_JULIA_MINIMAP,      _default_julia_minimap,      frame_seq=0)
 
     async def recv_loop() -> None:
+        nonlocal minimaps_enabled
+
         async for raw in ws:
             if not isinstance(raw, str):
                 continue
@@ -185,10 +232,67 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                         panel_state[PANEL_JULIA_MAIN] = julia_cfg
                         scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq,
                                        mark_active=False)
+                    existing_julia_minimap = panel_state.get(
+                        PANEL_JULIA_MINIMAP,
+                        _default_julia_minimap,
+                    )
+                    julia_minimap_source = panel_state.get(
+                        PANEL_JULIA_MAIN,
+                        existing_julia,
+                    )
+                    if _julia_minimap_needs_render(
+                        existing_julia_minimap,
+                        julia_minimap_source,
+                    ):
+                        julia_minimap_cfg = _julia_minimap_config(
+                            julia_minimap_source
+                        )
+                        queue_minimap(
+                            PANEL_JULIA_MINIMAP,
+                            julia_minimap_cfg,
+                            msg.frame_seq,
+                        )
+                elif msg.panel_id == PANEL_JULIA_MAIN:
+                    existing_julia_minimap = panel_state.get(
+                        PANEL_JULIA_MINIMAP,
+                        _default_julia_minimap,
+                    )
+                    if _julia_minimap_needs_render(
+                        existing_julia_minimap,
+                        cfg,
+                    ):
+                        julia_minimap_cfg = _julia_minimap_config(cfg)
+                        queue_minimap(
+                            PANEL_JULIA_MINIMAP,
+                            julia_minimap_cfg,
+                            msg.frame_seq,
+                        )
 
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)
                 log.info("mode → %s", msg.mode)
+
+            elif isinstance(msg, SetMinimapsMessage):
+                minimaps_enabled = msg.enabled
+                if minimaps_enabled:
+                    queue_minimap(
+                        PANEL_MANDELBROT_MINIMAP,
+                        _mandelbrot_minimap_config(),
+                        msg.frame_seq,
+                    )
+                    queue_minimap(
+                        PANEL_JULIA_MINIMAP,
+                        _julia_minimap_config(
+                            panel_state.get(PANEL_JULIA_MAIN, _default_julia)
+                        ),
+                        msg.frame_seq,
+                    )
+                else:
+                    scheduler.cancel(
+                        PANEL_MANDELBROT_MINIMAP,
+                        PANEL_JULIA_MINIMAP,
+                    )
+                log.info("minimaps → %s", "on" if minimaps_enabled else "off")
 
             elif isinstance(msg, UnknownMessage):
                 log.warning("unknown message: %s", msg.raw)
