@@ -13,7 +13,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './styles.css'
 import { useRenderSocket } from './useRenderSocket'
-import { IMAGE_PX, Panel, type InteractionPhase, type TileFrame } from './protocol'
+import {
+  IMAGE_PX,
+  Panel,
+  type InteractionPhase,
+  type Quality,
+  type TileFrame,
+} from './protocol'
 import { TilePainter } from './tilePainter'
 import { useTileWorker } from './useTileWorker'
 import { useViewState, type ViewState } from './useViewState'
@@ -31,6 +37,8 @@ const JULIA_C_INITIAL = { real: -0.7, imag: 0.27 }
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('performance')
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   const [debugOpen, setDebugOpen] = useState(false)
   const [debugFlags, setDebugFlags] = useState<DebugFlags>(DEFAULT_DEBUG_FLAGS)
   const { handle: fps, rates: fpsRates } = useFpsCounters()
@@ -86,7 +94,8 @@ export default function App() {
         pan_y: next.panY,
         zoom: next.zoom,
         fractal_type: 'mandelbrot',
-        max_iter: maxIterFor(next.zoom),
+        max_iter: maxIterFor(next.zoom, interaction, modeRef.current),
+        quality: qualityFor(interaction, modeRef.current),
         interaction,
       })
     },
@@ -107,7 +116,8 @@ export default function App() {
         fractal_type: 'julia',
         julia_c_real: juliaCRef.current.real,
         julia_c_imag: juliaCRef.current.imag,
-        max_iter: maxIterFor(next.zoom),
+        max_iter: maxIterFor(next.zoom, interaction, modeRef.current),
+        quality: qualityFor(interaction, modeRef.current),
         interaction,
       })
     },
@@ -362,8 +372,23 @@ function zoomLabel(zoom: number): string {
 // iters resolve it cleanly; at zoom 12 the boundary is hair-thin and
 // most pixels need 1000+ iterations to escape. Capped so deep zoom
 // renders stay interactive.
-function maxIterFor(zoom: number): number {
-  return Math.min(1500, 64 + zoom * 96)
+function maxIterFor(
+  zoom: number,
+  interaction: InteractionPhase = 'idle',
+  mode: Mode = 'live_evolution',
+): number {
+  const full = Math.min(1500, 64 + zoom * 96)
+  if (mode !== 'performance' || interaction !== 'active') return full
+  return Math.min(full, 512, 48 + zoom * 40)
+}
+
+function qualityFor(
+  interaction: InteractionPhase,
+  mode: Mode,
+): Quality {
+  return mode === 'performance' && interaction === 'active'
+    ? 'preview'
+    : 'full'
 }
 
 function Cog() {

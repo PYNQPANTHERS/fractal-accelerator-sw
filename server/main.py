@@ -164,8 +164,11 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                     pan_changed = (prev is None
                                    or prev.pan_x != cfg.pan_x
                                    or prev.pan_y != cfg.pan_y)
-                    if pan_changed:
-                        existing_julia = panel_state.get(PANEL_JULIA_MAIN, _default_julia)
+                    existing_julia = panel_state.get(PANEL_JULIA_MAIN, _default_julia)
+                    julia_needs_quality_upgrade = (
+                        existing_julia.preview and not cfg.preview
+                    )
+                    if pan_changed or julia_needs_quality_upgrade:
                         julia_cfg = RenderConfig(
                             pan_x        = existing_julia.pan_x,
                             pan_y        = existing_julia.pan_y,

@@ -305,6 +305,30 @@ no extra pixels to slide into.
 **Effect**: reduced visible jitter and stopped the black/unrendered
 border from appearing during 4×4 pan.
 
+## v14 — Performance-mode active navigation preview
+
+**Motivation**: scheduling changes alone cannot make a Mandelbrot frame
+cheaper. To raise the FPS ceiling during active navigation, the active
+render itself has to cost less, then a full-quality render can replace
+it once the view settles.
+
+**Change**:
+
+- In Performance mode, `interaction="active"` requests now send
+  `quality: "preview"` and a reduced active-navigation `max_iter`.
+- Wheel zoom now behaves like pan: wheel steps send active preview
+  renders, then a debounced full-quality `interaction="final"` render
+  fires after 140 ms of no wheel input.
+- Server-side Julia coupling now forces a full-quality Julia refresh
+  after a preview Mandelbrot pan settles, even if the final `c` matches
+  the last preview `c`.
+
+**FPGA note**: this maps to a useful hardware policy: active navigation
+can use a cheaper kernel / lower iteration budget / coarser sampling,
+while settled views use the full render path. That is likely a better
+Performance-mode lever than trying to schedule whole-frame Julia work
+around whole-frame Mandelbrot work in the simulator.
+
 ## What to try next if v12 still feels off
 
 - Drop `permessage-deflate` on the WebSocket — fractal payload is

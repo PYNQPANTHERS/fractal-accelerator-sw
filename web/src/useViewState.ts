@@ -21,7 +21,7 @@
  * translate.sv: window = 4.0 / 2^zoom). Wheel is centre-anchored:
  * the crosshair / Julia probe point doesn't drift on zoom.
  */
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGesture } from '@use-gesture/react'
 import { VISIBLE_PX, type InteractionPhase } from './protocol'
 
@@ -34,6 +34,7 @@ export interface ViewState {
 const ZOOM_MIN = 0
 const ZOOM_MAX = 15
 const WHEEL_PER_STEP = 100
+const WHEEL_SETTLE_MS = 140
 /** Fraction of the viewport (per side) of pre-rendered margin we can
  *  translate into before running out of fractal pixels. */
 const CANVAS_MARGIN_FRAC = 0.0 // 4×4 grid has no margin
@@ -112,6 +113,7 @@ export function useViewState(
   // If a new view appears while a render is in flight, stash it here.
   // Sent as soon as the in-flight render completes (last-write-wins).
   const pending = useRef<PendingCommit | null>(null)
+  const wheelSettleTimer = useRef<number | undefined>(undefined)
 
   const writeTransform = useCallback((x: number, y: number) => {
     const el = canvasElRef.current
@@ -146,6 +148,37 @@ export function useViewState(
   const canvasRef = useCallback((el: HTMLCanvasElement | null) => {
     canvasElRef.current = el
   }, [])
+
+  useEffect(() => {
+    return () => {
+      if (wheelSettleTimer.current !== undefined) {
+        window.clearTimeout(wheelSettleTimer.current)
+      }
+    }
+  }, [])
+
+  const requestRender = useCallback(
+    (next: ViewState, interaction: InteractionPhase) => {
+      viewRef.current = next
+      if (inFlight.current) {
+        pending.current = { view: next, interaction }
+        return
+      }
+      inFlight.current = true
+      onCommit(next, interaction)
+    },
+    [onCommit],
+  )
+
+  const scheduleWheelSettledRender = useCallback(() => {
+    if (wheelSettleTimer.current !== undefined) {
+      window.clearTimeout(wheelSettleTimer.current)
+    }
+    wheelSettleTimer.current = window.setTimeout(() => {
+      wheelSettleTimer.current = undefined
+      requestRender(viewRef.current, 'final')
+    }, WHEEL_SETTLE_MS)
+  }, [requestRender])
 
   // Advance the world toward (cursorX, cursorY) at a wall-clock cap.
   // Time-based, not event-based: high pointer rates don't blow past
@@ -337,13 +370,8 @@ export function useViewState(
           // for the Mandelbrot panel) must not drift on zoom.
           const next = { panX: cur.panX, panY: cur.panY, zoom: nextZoom }
           setView(next)
-          viewRef.current = next
-          if (inFlight.current) {
-            pending.current = { view: next, interaction: 'idle' }
-          } else {
-            inFlight.current = true
-            onCommit(next, 'idle')
-          }
+          requestRender(next, 'active')
+          scheduleWheelSettledRender()
         }
       },
     },
