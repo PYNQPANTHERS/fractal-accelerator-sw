@@ -21,8 +21,16 @@
 
 export const HEADER_BYTES = 16
 export const TILE_PX = 256
-export const GRID = 4
-export const IMAGE_PX = TILE_PX * GRID // 1024
+/** 5×5 grid of 256-px tiles (25 tiles total). The centre 4×4 (1024 px)
+ *  is the user's visible area; the surrounding ring (128 px each side)
+ *  is pre-rendered margin so the canvas can pan into already-correct
+ *  fractal pixels without round-tripping the sim/PL. */
+export const GRID = 5
+export const VISIBLE_PX = 1024
+export const IMAGE_PX = TILE_PX * GRID // 1280
+/** Offset (px) from the rendered image's top-left to the visible area's
+ *  top-left: (IMAGE_PX - VISIBLE_PX) / 2 = 128 on each side. */
+export const VISIBLE_OFFSET = (IMAGE_PX - VISIBLE_PX) / 2
 export const TILE_PAYLOAD_BYTES = (TILE_PX * TILE_PX) / 2 // 32 768
 
 export const MSG_TILE = 0x01
@@ -73,6 +81,8 @@ export function tileGridPosition(tileId: number): { col: number; row: number } {
   return { col: tileId % GRID, row: Math.floor(tileId / GRID) }
 }
 
+export type Quality = 'full' | 'preview'
+
 export type ClientMessage =
   | {
       type: 'set_view'
@@ -85,5 +95,8 @@ export type ClientMessage =
       julia_c_real?: number
       julia_c_imag?: number
       max_iter?: number
+      /** Optional. Defaults to "full". Server-side "preview" renders
+       *  use the subsampled C++ path — ~3-4× faster, slightly blocky. */
+      quality?: Quality
     }
   | { type: 'set_mode'; mode: 'performance' | 'live_evolution' }

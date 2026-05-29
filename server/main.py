@@ -157,6 +157,10 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                             julia_c_real = msg.pan_x,   # c = Mandelbrot centre
                             julia_c_imag = msg.pan_y,
                             max_iter     = existing_julia.max_iter,
+                            # If the Mandelbrot drag is in preview mode,
+                            # render Julia in preview too — keeps the
+                            # live coupling fast during interaction.
+                            preview      = cfg.preview,
                         )
                         panel_state[PANEL_JULIA_MAIN] = julia_cfg
                         scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq,

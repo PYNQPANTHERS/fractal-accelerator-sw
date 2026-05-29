@@ -57,6 +57,9 @@ class SetViewMessage:
     julia_c_real: float = 0.0
     julia_c_imag: float = 0.0
     max_iter:  int = 256
+    # "full" (default) for crisp output, "preview" for the fast
+    # subsampled path the client uses during active drag.
+    quality:   str = "full"
 
 
 @dataclass
@@ -84,6 +87,9 @@ def parse_message(text: str) -> ParsedMessage:
 
     if msg_type == "set_view":
         try:
+            quality = str(data.get("quality", "full"))
+            if quality not in ("full", "preview"):
+                quality = "full"
             return SetViewMessage(
                 panel_id     = int(data["panel_id"]),
                 frame_seq    = int(data.get("frame_seq", 0)),
@@ -94,6 +100,7 @@ def parse_message(text: str) -> ParsedMessage:
                 julia_c_real = float(data.get("julia_c_real", 0.0)),
                 julia_c_imag = float(data.get("julia_c_imag", 0.0)),
                 max_iter     = int(data.get("max_iter", 256)),
+                quality      = quality,
             )
         except (KeyError, ValueError, TypeError):
             return UnknownMessage(raw=data)
@@ -117,6 +124,7 @@ def set_view_to_config(msg: SetViewMessage) -> RenderConfig:
         julia_c_real = msg.julia_c_real,
         julia_c_imag = msg.julia_c_imag,
         max_iter     = msg.max_iter,
+        preview      = (msg.quality == "preview"),
     )
 
 

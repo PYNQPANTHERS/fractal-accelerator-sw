@@ -49,9 +49,6 @@ export default function App() {
 
   const commitMandelbrot = useCallback(
     (next: ViewState) => {
-      // Only update Julia's c when Mandelbrot actually moved — pure
-      // zoom-changes keep the crosshair on the same complex point, so
-      // there's no reason to re-render Julia.
       const panChanged =
         next.panX !== juliaCRef.current.real ||
         next.panY !== juliaCRef.current.imag

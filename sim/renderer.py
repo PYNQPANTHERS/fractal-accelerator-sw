@@ -24,7 +24,10 @@ from sim.config import RenderConfig
 
 TILE_PIXELS = 256
 TILE_BYTES  = TILE_PIXELS * TILE_PIXELS // 2   # 32768
-TILES_PER_IMAGE = 16
+# 5×5 grid of 256-px tiles: 1280-px rendered image, centre 1024 is the
+# browser-visible region, surrounding ring (128 px each side) is
+# pre-rendered pan margin.
+TILES_PER_IMAGE = 25
 
 # Frame format from sim/cpp/src/response.hpp:
 #   byte 0    : message_type
@@ -172,6 +175,7 @@ async def render_image(config: RenderConfig):
         "julia_c_real": config.julia_c_real,
         "julia_c_imag": config.julia_c_imag,
         "max_iter":     config.max_iter,
+        "preview":      config.preview,
     }
     sim = _get_sim()
 

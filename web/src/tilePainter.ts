@@ -13,10 +13,15 @@
  * One ImageData scratch buffer is allocated lazily and reused.
  */
 import { PALETTE_RGBA } from './palette'
-import { IMAGE_PX, TILE_PX, tileGridPosition, type TileFrame } from './protocol'
+import {
+  GRID,
+  IMAGE_PX,
+  TILE_PX,
+  tileGridPosition,
+  type TileFrame,
+} from './protocol'
 
-const TILES_PER_FRAME = 16
-const ALL_TILES_MASK = (1 << TILES_PER_FRAME) - 1 // 0xffff
+const TILES_PER_FRAME = GRID * GRID
 
 export class TilePainter {
   readonly canvas: HTMLCanvasElement
@@ -24,8 +29,10 @@ export class TilePainter {
   private staging: HTMLCanvasElement
   private stagingCtx: CanvasRenderingContext2D
   private scratch: ImageData
-  // Bitmask of tile_ids painted into staging for the current frame_seq.
-  private tilesGot = 0
+  // Tracks which tile_ids have been painted into staging for the
+  // current frame_seq. Using a Set rather than a bitmask because the
+  // 6×6 grid (36 tiles) overflows JS's 32-bit bitwise ops.
+  private tilesGot = new Set<number>()
   private currentSeq = -1
   /** Called when a full frame has been swapped into the visible canvas. */
   onFrameComplete: (() => void) | null = null
@@ -53,22 +60,17 @@ export class TilePainter {
     // overwritten tile by tile, and the user never sees staging.
     if (tile.frameSeq !== this.currentSeq) {
       this.currentSeq = tile.frameSeq
-      this.tilesGot = 0
+      this.tilesGot.clear()
     }
 
-    // Unpack into the scratch ImageData and blit into staging.
     unpackIntoImageData(tile.payload, this.scratch.data)
     const { col, row } = tileGridPosition(tile.tileId)
     this.stagingCtx.putImageData(this.scratch, col * TILE_PX, row * TILE_PX)
-    this.tilesGot |= 1 << tile.tileId
+    this.tilesGot.add(tile.tileId)
 
-    // Frame complete → atomic swap. The drag controller (via
-    // onFrameComplete) is responsible for resetting the preview
-    // transform AND recording the new cursor baseline so the next
-    // pointermove writes a correct delta relative to the new origin.
-    if (this.tilesGot === ALL_TILES_MASK) {
+    if (this.tilesGot.size === TILES_PER_FRAME) {
       this.displayCtx.drawImage(this.staging, 0, 0)
-      this.tilesGot = 0
+      this.tilesGot.clear()
       this.onFrameComplete?.()
     }
   }

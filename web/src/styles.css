@@ -156,21 +156,24 @@ body::after {
   cursor: grabbing;
 }
 
-/* The big fractal canvas overshoots the viewport on each side by
- * --canvas-margin. The viewport's `overflow: hidden` clips the excess.
+/* The canvas's internal bitmap is 1536×1536 (6×6 grid of 256-px
+ * sixteenths) but only the centre 1024×1024 (the centre 4×4) is
+ * the user's visible region. The surrounding ring of sixteenths is
+ * pre-rendered margin that the canvas can pan into without a new
+ * render. CSS-size the canvas to 150% of the viewport and offset by
+ * −25% on each side so the centre fills the viewport exactly. The
+ * viewport's `overflow: hidden` clips the margin until pan exposes it.
  *
- * When the user drags, the canvas CSS-translates by some pixel delta —
- * with this overshoot, the "uncovered" edge brings fractal pixels into
- * view instead of the viewport background. As long as the drag-preview
- * stays within ±margin/2 of the viewport, the user never sees a black
- * border while waiting for the new render. */
+ * Must match VISIBLE_PX / IMAGE_PX from protocol.ts: 1024 / 1536 = 2/3
+ * means the canvas needs to be 1/(2/3) = 1.5× the viewport. */
 .viewport-canvas {
-  --canvas-margin: 12%;
+  --image-to-visible: 1.25;    /* IMAGE_PX / VISIBLE_PX (1280 / 1024) */
+  --margin-frac: 0.1;          /* margin / IMAGE_PX (128 / 1280) */
   position: absolute;
-  top: calc(var(--canvas-margin) * -1);
-  left: calc(var(--canvas-margin) * -1);
-  width: calc(100% + var(--canvas-margin) * 2) !important;
-  height: calc(100% + var(--canvas-margin) * 2) !important;
+  top: calc(var(--margin-frac) * -100%);
+  left: calc(var(--margin-frac) * -100%);
+  width: calc(100% * var(--image-to-visible)) !important;
+  height: calc(100% * var(--image-to-visible)) !important;
   display: block;
   image-rendering: pixelated;
 }

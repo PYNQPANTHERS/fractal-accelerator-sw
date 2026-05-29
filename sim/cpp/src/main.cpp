@@ -59,7 +59,8 @@ int main() {
                         compute_tile(tile_bufs[tile_id], tile_id,
                                      c.pan_x, c.pan_y, c.zoom, c.max_iter,
                                      c.fractal_type,
-                                     c.julia_c_real, c.julia_c_imag);
+                                     c.julia_c_real, c.julia_c_imag,
+                                     c.preview);
                     });
                 }
                 for (auto& t : threads) t.join();

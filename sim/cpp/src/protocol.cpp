@@ -61,6 +61,7 @@ Command parse_command(const std::string& line) {
             r.julia_c_real = j.value("julia_c_real", 0.0);
             r.julia_c_imag = j.value("julia_c_imag", 0.0);
             r.max_iter     = j.value("max_iter", 256);
+            r.preview      = j.value("preview", false);
             if (r.fractal_type != "mandelbrot" &&
                 r.fractal_type != "julia" &&
                 r.fractal_type != "burning_ship") {

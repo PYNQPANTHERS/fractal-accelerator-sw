@@ -23,7 +23,7 @@
  */
 import { useCallback, useRef, useState } from 'react'
 import { useGesture } from '@use-gesture/react'
-import { IMAGE_PX } from './protocol'
+import { VISIBLE_PX } from './protocol'
 
 export interface ViewState {
   panX: number
@@ -34,8 +34,23 @@ export interface ViewState {
 const ZOOM_MIN = 0
 const ZOOM_MAX = 15
 const WHEEL_PER_STEP = 100
-/** Must match --canvas-margin in styles.css (12%). */
-const CANVAS_MARGIN_FRAC = 0.12
+/** Fraction of the viewport (per side) of pre-rendered margin we can
+ *  translate into before running out of fractal pixels. With
+ *  IMAGE_PX=1280 and VISIBLE_PX=1024, the margin is 128/1024 = 12.5%
+ *  of the viewport on each side. */
+const CANVAS_MARGIN_FRAC = 0.125
+/** Max world-pan speed in pixels per millisecond. Cap is enforced by
+ *  wall-clock time (not per pointermove event), so very high pointer
+ *  rates don't blow past it. At 1.5 px/ms the world can sweep across
+ *  a 1000-px panel in 666 ms; that's well above any intentional drag
+ *  but below "flick the screen across the room." */
+const MAX_PAN_PX_PER_MS = 1.5
+/** Predictive prefetch: when a render lands mid-drag with the world
+ *  still moving above this speed, speculatively request the *next*
+ *  render at (worldPos + velocity × LOOKAHEAD). Tiles arrive roughly
+ *  when the cursor gets there, so the swap is timely instead of late. */
+const PREFETCH_MIN_SPEED_PX_PER_MS = 0.2
+const PREFETCH_LOOKAHEAD_MS = 150
 
 export interface ViewController {
   view: ViewState
@@ -54,20 +69,25 @@ interface DragSession {
   startView: ViewState
   marginX: number
   marginY: number
-  /** Cursor position (relative to drag origin) when the *currently in
-   *  flight* render request was sent. The baseline used for the
-   *  preview transform once that render lands. We rebase to *sent*
-   *  position, not current cursor — the canvas bitmap shows the view
-   *  that corresponds to where the cursor was at send time. */
-  sentMx: number
-  sentMy: number
-  /** Cursor position used as transform baseline right now. Updated to
-   *  sentMx/sentMy when notifyFrameApplied fires. */
-  baselineMx: number
-  baselineMy: number
-  /** Latest cursor position from the most recent pointermove. */
-  lastMx: number
-  lastMy: number
+  /** World position (px relative to drag start) — the canvas's view of
+   *  where things are. Lags the cursor by at most one render's worth
+   *  of cap × time. This is what we commit to the server. */
+  worldX: number
+  worldY: number
+  /** Wall-clock time of the last world-advance step, for time-based cap. */
+  worldLastTs: number
+  /** Smoothed world velocity (px / ms), used for predictive prefetch. */
+  vx: number
+  vy: number
+  /** World position when the in-flight render was sent. */
+  sentX: number
+  sentY: number
+  /** Current transform baseline (= sentX/Y after a render applies). */
+  baselineX: number
+  baselineY: number
+  /** Latest cursor position. */
+  cursorX: number
+  cursorY: number
 }
 
 export function useViewState(
@@ -84,11 +104,10 @@ export function useViewState(
   const drag = useRef<DragSession | null>(null)
   // True when a streamed render is in flight (sent but final tile not
   // yet received). Used to gate the next stream-commit so we never
-  // pipeline requests faster than the server can drain them — that's
-  // what was causing the latency to grow and the canvas to fall behind.
+  // pipeline requests faster than the server can drain them.
   const inFlight = useRef(false)
   // If a new view appears while a render is in flight, stash it here.
-  // We send it as soon as the in-flight render completes.
+  // Sent as soon as the in-flight render completes (last-write-wins).
   const pending = useRef<ViewState | null>(null)
 
   const writeTransform = useCallback((x: number, y: number) => {
@@ -121,6 +140,28 @@ export function useViewState(
     canvasElRef.current = el
   }, [])
 
+  // Advance the world toward (cursorX, cursorY) at a wall-clock cap.
+  // Time-based, not event-based: high pointer rates don't blow past
+  // the cap. Also updates an EWMA-smoothed velocity for use by the
+  // predictive prefetch.
+  const advanceWorld = (sess: DragSession, cursorX: number, cursorY: number) => {
+    const now = performance.now()
+    const dt = Math.max(1, now - sess.worldLastTs)
+    sess.worldLastTs = now
+    const maxStep = MAX_PAN_PX_PER_MS * dt
+    const stepX = clamp(cursorX - sess.worldX, -maxStep, maxStep)
+    const stepY = clamp(cursorY - sess.worldY, -maxStep, maxStep)
+    sess.worldX += stepX
+    sess.worldY += stepY
+    // Smooth velocity (px/ms). alpha picked so the velocity tracks
+    // genuine motion within ~50 ms but ignores per-event jitter.
+    const instVx = stepX / dt
+    const instVy = stepY / dt
+    const alpha = 0.3
+    sess.vx = sess.vx * (1 - alpha) + instVx * alpha
+    sess.vy = sess.vy * (1 - alpha) + instVy * alpha
+  }
+
   /**
    * Painter calls this each time a complete frame swaps in. Three jobs:
    *  1. Rebase the visual baseline to the cursor position at the
@@ -139,11 +180,13 @@ export function useViewState(
     const sess = drag.current
     const el = canvasElRef.current
     if (sess) {
-      sess.baselineMx = sess.sentMx
-      sess.baselineMy = sess.sentMy
+      // Bitmap shows view-at-(sentX, sentY) → that's the new baseline.
+      // World may have advanced further; transform shows the gap.
+      sess.baselineX = sess.sentX
+      sess.baselineY = sess.sentY
       if (el) {
-        const tx = sess.lastMx - sess.baselineMx
-        const ty = sess.lastMy - sess.baselineMy
+        const tx = sess.worldX - sess.baselineX
+        const ty = sess.worldY - sess.baselineY
         el.style.transform =
           tx === 0 && ty === 0 ? '' : `translate(${tx}px, ${ty}px)`
       }
@@ -151,18 +194,53 @@ export function useViewState(
       el.style.transform = ''
     }
 
-    // Flush a stashed view if one accumulated during the in-flight render.
-    if (pending.current) {
-      const next = pending.current
+    // Flush any stashed view. If we're still in a drag, rebuild the
+    // view from the *current* world position — the world has likely
+    // advanced past the stash. Outside a drag (e.g. release stash),
+    // send the stashed view as-is.
+    const stashed = pending.current
+    if (stashed) {
       pending.current = null
-      inFlight.current = true
+      let next = stashed
       if (sess) {
-        sess.sentMx = sess.lastMx
-        sess.sentMy = sess.lastMy
+        const start = sess.startView
+        const win = 4.0 / Math.pow(2, start.zoom)
+        next = {
+          panX: start.panX + -sess.worldX * (win / VISIBLE_PX),
+          panY: start.panY + -sess.worldY * (win / VISIBLE_PX),
+          zoom: start.zoom,
+        }
+        sess.sentX = sess.worldX
+        sess.sentY = sess.worldY
       }
+      inFlight.current = true
       viewRef.current = next
       onCommit(next)
+      return
     }
+
+    // Nothing stashed — if we're mid-drag with measurable velocity,
+    // speculatively request the *next* viewport now. By the time the
+    // tiles land, the cursor is likely there and we swap atomically
+    // instead of waiting for a fresh render after the user crosses
+    // into uncharted territory.
+    if (!sess) return
+    const speed = Math.hypot(sess.vx, sess.vy)
+    if (speed < PREFETCH_MIN_SPEED_PX_PER_MS) return
+    const predX = sess.worldX + sess.vx * PREFETCH_LOOKAHEAD_MS
+    const predY = sess.worldY + sess.vy * PREFETCH_LOOKAHEAD_MS
+    const start = sess.startView
+    const win = 4.0 / Math.pow(2, start.zoom)
+    const speculative: ViewState = {
+      panX: start.panX + -predX * (win / VISIBLE_PX),
+      panY: start.panY + -predY * (win / VISIBLE_PX),
+      zoom: start.zoom,
+    }
+    inFlight.current = true
+    sess.sentX = predX
+    sess.sentY = predY
+    viewRef.current = speculative
+    onCommit(speculative)
   }, [onCommit])
 
   const bind = useGesture(
@@ -182,29 +260,35 @@ export function useViewState(
           startView: viewRef.current,
           marginX,
           marginY,
-          sentMx: 0,
-          sentMy: 0,
-          baselineMx: 0,
-          baselineMy: 0,
-          lastMx: 0,
-          lastMy: 0,
+          worldX: 0,
+          worldY: 0,
+          worldLastTs: performance.now(),
+          vx: 0,
+          vy: 0,
+          sentX: 0,
+          sentY: 0,
+          baselineX: 0,
+          baselineY: 0,
+          cursorX: 0,
+          cursorY: 0,
         }
       },
       onDrag: ({ movement: [mx, my], last }) => {
         const sess = drag.current
         if (!sess) return
-        sess.lastMx = mx
-        sess.lastMy = my
+        sess.cursorX = mx
+        sess.cursorY = my
+
+        // World advances at a wall-clock cap toward the cursor on every
+        // pointermove. Slow drags pass through 1:1 (the cap is generous
+        // for normal motion). Fast flicks get throttled.
+        advanceWorld(sess, mx, my)
 
         const start = sess.startView
-
-        // World pan is 1:1 with cursor (measured from the *original*
-        // drag start). The committed view always tracks the full
-        // cursor distance — no overshoot, no clamping.
         const win = 4.0 / Math.pow(2, start.zoom)
         const next: ViewState = {
-          panX: start.panX + -mx * (win / IMAGE_PX),
-          panY: start.panY + -my * (win / IMAGE_PX),
+          panX: start.panX + -sess.worldX * (win / VISIBLE_PX),
+          panY: start.panY + -sess.worldY * (win / VISIBLE_PX),
           zoom: start.zoom,
         }
 
@@ -221,17 +305,15 @@ export function useViewState(
           return
         }
 
-        writeTransform(mx - sess.baselineMx, my - sess.baselineMy)
+        writeTransform(sess.worldX - sess.baselineX, sess.worldY - sess.baselineY)
 
         if (!streamDuringDrag) return
-        // Backpressure: only send if the previous render has finished;
-        // otherwise keep the latest view stashed (last-write-wins).
         if (inFlight.current) {
           pending.current = next
         } else {
           inFlight.current = true
-          sess.sentMx = mx
-          sess.sentMy = my
+          sess.sentX = sess.worldX
+          sess.sentY = sess.worldY
           viewRef.current = next
           onCommit(next)
         }
