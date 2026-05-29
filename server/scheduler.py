@@ -5,8 +5,8 @@ Picks the next job to render based on the current scheduling mode.
 
 Two modes:
     performance    — active panel gets full renderer throughput;
-                     background panels wait while an explicit browser
-                     interaction is active.
+                     background panels fill gaps only when active work
+                     is not currently pending.
     live_evolution — both main panels interleave; each gets roughly
                      half the renderer throughput but both update
                      continuously.
@@ -79,15 +79,14 @@ class Scheduler:
             self.job_available.set()
 
     def has_pending(self) -> bool:
-        """True if any job is queued, even if currently interaction-gated."""
+        """True if any job is queued."""
         return bool(self._pending)
 
     def seconds_until_next_job(self) -> Optional[float]:
         """Seconds until the current pending set can produce work.
 
         Returns:
-            None  — no work is pending, or work is waiting on an
-                    interaction-state change; wait for the next push.
+            None  — no work is pending; wait indefinitely for a push.
             0.0   — a job is ready now.
         """
         if not self._pending:
@@ -124,8 +123,6 @@ class Scheduler:
 
         if self._active_panel in self._pending:
             return self._active_panel
-        if self._interacting_panel is not None:
-            return None
         if other_main in self._pending:
             return other_main
         for minimap in (PANEL_MANDELBROT_MINIMAP, PANEL_JULIA_MINIMAP):

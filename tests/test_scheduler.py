@@ -12,7 +12,7 @@ def _cfg(fractal_type: str = "mandelbrot") -> RenderConfig:
     return RenderConfig(pan_x=0.0, pan_y=0.0, zoom=0, fractal_type=fractal_type)
 
 
-def test_performance_holds_julia_until_final_active_view():
+def test_performance_uses_julia_as_background_during_active_drag():
     scheduler = Scheduler()
 
     scheduler.push(
@@ -29,35 +29,40 @@ def test_performance_holds_julia_until_final_active_view():
         frame_seq=1,
         mark_active=False,
     )
-    assert scheduler.next_job() is None
+    assert scheduler.next_job()[0] == PANEL_JULIA_MAIN
+
+
+def test_performance_prioritises_active_panel_over_background():
+    scheduler = Scheduler()
+
+    scheduler.push(
+        PANEL_MANDELBROT_MAIN,
+        _cfg("mandelbrot"),
+        frame_seq=1,
+        interaction="active",
+    )
+    assert scheduler.next_job()[0] == PANEL_MANDELBROT_MAIN
+
+    scheduler.push(
+        PANEL_JULIA_MAIN,
+        _cfg("julia"),
+        frame_seq=1,
+        mark_active=False,
+    )
 
     scheduler.push(
         PANEL_MANDELBROT_MAIN,
         _cfg("mandelbrot"),
         frame_seq=2,
-        interaction="final",
+        interaction="active",
     )
     assert scheduler.next_job()[0] == PANEL_MANDELBROT_MAIN
     assert scheduler.next_job()[0] == PANEL_JULIA_MAIN
 
 
-def test_deferred_wait_wakes_when_final_view_arrives():
+def test_wait_wakes_when_active_view_arrives():
     async def scenario() -> None:
         scheduler = Scheduler()
-        scheduler.push(
-            PANEL_MANDELBROT_MAIN,
-            _cfg("mandelbrot"),
-            frame_seq=1,
-            interaction="active",
-        )
-        assert scheduler.next_job()[0] == PANEL_MANDELBROT_MAIN
-        scheduler.push(
-            PANEL_JULIA_MAIN,
-            _cfg("julia"),
-            frame_seq=1,
-            mark_active=False,
-        )
-
         assert scheduler.next_job() is None
 
         waiter = asyncio.create_task(_wait_for_scheduler(scheduler))
@@ -67,7 +72,7 @@ def test_deferred_wait_wakes_when_final_view_arrives():
             PANEL_MANDELBROT_MAIN,
             _cfg("mandelbrot"),
             frame_seq=2,
-            interaction="final",
+            interaction="active",
         )
         await asyncio.wait_for(waiter, timeout=0.05)
 

@@ -74,7 +74,10 @@ export default function App() {
         juliaCRef.current = { real: next.panX, imag: next.panY }
       }
       const seq = nextSeq()
-      fps.noteRender(seq)
+      fps.noteRender(seq, Panel.MandelbrotMain)
+      if (panChanged) {
+        fps.noteRender(seq, Panel.JuliaMain)
+      }
       sendRef.current({
         type: 'set_view',
         panel_id: Panel.MandelbrotMain,
@@ -93,7 +96,7 @@ export default function App() {
   const commitJulia = useCallback(
     (next: ViewState, interaction: InteractionPhase = 'idle') => {
       const seq = nextSeq()
-      fps.noteRender(seq)
+      fps.noteRender(seq, Panel.JuliaMain)
       sendRef.current({
         type: 'set_view',
         panel_id: Panel.JuliaMain,
@@ -113,9 +116,9 @@ export default function App() {
 
   // Both modes stream mid-drag; backpressure inside useViewState gates
   // requests so the server never queues more than one render. Each
-  // request carries an interaction phase so Performance mode can hold
-  // Julia until the final settled Mandelbrot view, matching the FPGA
-  // "active surface owns the fabric" scheduling model.
+  // request carries an interaction phase so Performance mode can give
+  // the active surface first refusal while still letting Julia fill
+  // renderer bubbles between Mandelbrot frames.
   const mandelbrotView = useViewState(MANDELBROT_INITIAL, commitMandelbrot, true)
   const juliaView = useViewState(JULIA_INITIAL, commitJulia, true)
 
@@ -135,14 +138,14 @@ export default function App() {
   // can show the actual render-completion rate and request→display lat.
   const onMandelFrame = useCallback(
     (seq: number) => {
-      fps.notePaint(seq)
+      fps.notePaint(seq, Panel.MandelbrotMain)
       mandelbrotView.notifyFrameApplied()
     },
     [fps, mandelbrotView.notifyFrameApplied],
   )
   const onJuliaFrame = useCallback(
     (seq: number) => {
-      fps.notePaint(seq)
+      fps.notePaint(seq, Panel.JuliaMain)
       juliaView.notifyFrameApplied()
     },
     [fps, juliaView.notifyFrameApplied],

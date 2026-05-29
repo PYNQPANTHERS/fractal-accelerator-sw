@@ -20,7 +20,7 @@ Listens on `ws://localhost:8765` by default. Set `SERVER_HOST` / `SERVER_PORT` e
 
 ## Scheduling modes
 
-- **Performance** (default): active panel gets full renderer throughput. During an explicit drag interaction, background panels defer until the final settled view arrives.
+- **Performance** (default): active panel gets first priority. Background panels render only when no active-panel job is pending, so the renderer can fill gaps without round-robin stealing priority.
 - **Live Evolution**: both panels interleave, each at roughly half the render rate. Trades throughput for the visual of both panels updating together.
 
 Switch via `{"type": "set_mode", "mode": "live_evolution"}` from the browser.
