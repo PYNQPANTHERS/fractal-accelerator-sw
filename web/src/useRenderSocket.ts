@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import {
-  parseFrame,
+  parseMessage,
   Panel,
   type ClientMessage,
   type TileFrame,
@@ -62,22 +62,23 @@ export function useRenderSocket(
           // Server-side JSON (status, errors). Ignored for now.
           return
         }
-        let frame: TileFrame
+        let frames: TileFrame[]
         try {
-          frame = parseFrame(ev.data as ArrayBuffer)
+          frames = parseMessage(ev.data as ArrayBuffer)
         } catch (err) {
           console.warn('[ws] bad frame:', err)
           return
         }
-        const seen = latestSeqRef.current[frame.panel]
-        // frame_seq is shared across all 16 tiles of one image, so we
-        // only drop tiles whose seq is strictly older than what we've
-        // already seen (i.e. leftovers from a previous viewport).
-        if (seen >= 0 && isOlder(frame.frameSeq, seen)) {
+        // A bundle is one frame_seq for one panel by construction, so
+        // the staleness check on the first tile applies to all of them.
+        if (frames.length === 0) return
+        const first = frames[0]
+        const seen = latestSeqRef.current[first.panel]
+        if (seen >= 0 && isOlder(first.frameSeq, seen)) {
           return
         }
-        latestSeqRef.current[frame.panel] = frame.frameSeq
-        onTileRef.current(frame)
+        latestSeqRef.current[first.panel] = first.frameSeq
+        for (const f of frames) onTileRef.current(f)
       }
 
       ws.onclose = () => {

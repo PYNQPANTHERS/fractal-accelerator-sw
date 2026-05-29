@@ -21,7 +21,8 @@ from sim.config import RenderConfig
 from sim.renderer import render_image, ping as sim_ping
 from server.protocol import (
     parse_message,
-    pack_tile_frame,
+    pack_tile_frame,  # kept exported for tests/back-compat
+    pack_tile_bundle,
     set_view_to_config,
     SetViewMessage,
     SetModeMessage,
@@ -92,14 +93,18 @@ async def _render_and_stream(
     panel_id, job = result
     log.info("rendering panel=%d frame_seq=%d", panel_id, job.frame_seq)
 
+    # Collect all tiles for this render, then send them in one binary
+    # WS frame. Avoids per-tile send overhead (~0.2 ms × N tiles).
+    tiles: list[tuple[int, bytes]] = []
     async for tile_id, tile_bytes in render_image(job.config):
-        frame = pack_tile_frame(
+        tiles.append((tile_id, tile_bytes))
+    if tiles:
+        bundle = pack_tile_bundle(
             panel_id=panel_id,
-            tile_id=tile_id,
             frame_seq=job.frame_seq,
-            payload=tile_bytes,
+            tiles=tiles,
         )
-        await ws.send(frame)
+        await ws.send(bundle)
 
 
 async def _handle(ws: WebSocketServerProtocol) -> None:
@@ -191,7 +196,10 @@ async def main() -> None:
         raise SystemExit(1)
 
     log.info("fractal server on ws://%s:%d", HOST, PORT)
-    async with websockets.serve(_handle, HOST, PORT):
+    # compression=None disables permessage-deflate. Our payload is
+    # entropy-dense palette indices — gzipping them buys nothing and
+    # costs ~3-5 ms per render of CPU time on both endpoints.
+    async with websockets.serve(_handle, HOST, PORT, compression=None):
         await asyncio.Future()
 
 

@@ -35,9 +35,10 @@ PANEL_JULIA_MINIMAP      = 3
 
 # ── Binary frame constants ────────────────────────────────────────────────────
 
-MSG_TILE       = 0x01
-PIXEL_FMT_4BIT = 0x10   # nibble-packed 4-bit indices, low nibble first
-TILE_PIXELS    = 256
+MSG_TILE        = 0x01
+MSG_TILE_BUNDLE = 0x02       # all tiles for one render, one WS frame
+PIXEL_FMT_4BIT  = 0x10       # nibble-packed 4-bit indices, low nibble first
+TILE_PIXELS     = 256
 
 _HEADER_FMT  = "<BBBHHHB6x"   # 16 bytes: 10 data + 6 reserved zeros
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)  # 16
@@ -148,3 +149,46 @@ def pack_tile_frame(panel_id:  int,
         PIXEL_FMT_4BIT,
     )
     return header + payload
+
+
+def pack_tile_bundle(panel_id:  int,
+                     frame_seq: int,
+                     tiles:     list[tuple[int, bytes]],
+                     width:     int = TILE_PIXELS,
+                     height:    int = TILE_PIXELS) -> bytes:
+    """Pack all tiles for one render into a single WS binary frame.
+
+    Format:
+      bytes 0-15  : header (same 16-byte layout as pack_tile_frame,
+                    but msg_type = MSG_TILE_BUNDLE and the byte that
+                    used to be tile_id is now tile_count).
+      bytes 16..  : N tile records, each = (u8 tile_id) + (w*h/2 payload).
+
+    Sending one ~800 KB frame instead of 25 × ~32.8 KB frames removes
+    25 × ws.send overhead per render.
+    """
+    tile_count = len(tiles)
+    if tile_count > 255:
+        raise ValueError(f"tile_count {tile_count} > 255")
+    header = struct.pack(
+        _HEADER_FMT,
+        MSG_TILE_BUNDLE,
+        panel_id,
+        tile_count,
+        frame_seq & 0xFFFF,
+        width,
+        height,
+        PIXEL_FMT_4BIT,
+    )
+    # Pre-size the bytearray and fill in one pass. bytes.join would
+    # also work but allocates more temporaries.
+    payload_bytes_per_tile = (width * height) // 2
+    record_size = 1 + payload_bytes_per_tile
+    out = bytearray(_HEADER_SIZE + tile_count * record_size)
+    out[:_HEADER_SIZE] = header
+    pos = _HEADER_SIZE
+    for tile_id, payload in tiles:
+        out[pos] = tile_id & 0xFF
+        out[pos + 1 : pos + 1 + payload_bytes_per_tile] = payload
+        pos += record_size
+    return bytes(out)
