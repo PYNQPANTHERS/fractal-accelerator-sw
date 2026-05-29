@@ -25,12 +25,10 @@ export const TILE_PX = 256
  *  is the user's visible area; the surrounding ring (128 px each side)
  *  is pre-rendered margin so the canvas can pan into already-correct
  *  fractal pixels without round-tripping the sim/PL. */
-export const GRID = 5
+export const GRID = 4
 export const VISIBLE_PX = 1024
-export const IMAGE_PX = TILE_PX * GRID // 1280
-/** Offset (px) from the rendered image's top-left to the visible area's
- *  top-left: (IMAGE_PX - VISIBLE_PX) / 2 = 128 on each side. */
-export const VISIBLE_OFFSET = (IMAGE_PX - VISIBLE_PX) / 2
+export const IMAGE_PX = TILE_PX * GRID // 1024
+export const VISIBLE_OFFSET = 0
 export const TILE_PAYLOAD_BYTES = (TILE_PX * TILE_PX) / 2 // 32 768
 
 export const MSG_TILE        = 0x01

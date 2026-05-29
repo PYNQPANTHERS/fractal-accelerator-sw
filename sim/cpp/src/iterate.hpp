@@ -22,8 +22,8 @@ namespace fractal_sim {
 // margin tiles nearly free (large in-set / far-exterior regions skip).
 constexpr int  TILE_PIXELS    = 256;                       // tile side (one sixteenth)
 constexpr int  VISIBLE_PIXELS = 1024;                      // centre region the user sees
-constexpr int  IMAGE_PIXELS   = 1280;                      // visible + 128-px margin each side
-constexpr int  TILES_PER_SIDE = IMAGE_PIXELS / TILE_PIXELS; // 5 (5x5 grid of sixteenths)
+constexpr int  IMAGE_PIXELS   = 1024;                      // 4x4 grid, no margin
+constexpr int  TILES_PER_SIDE = IMAGE_PIXELS / TILE_PIXELS; // 4 (4x4 grid of sixteenths)
 constexpr int  PALETTE_BANDS  = 16;                        // 4-bit output (palette indices)
 constexpr double WINDOW_AT_ZOOM_0 = 4.0;                   // complex window over the VISIBLE area at zoom 0
 

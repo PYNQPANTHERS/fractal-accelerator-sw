@@ -38,7 +38,7 @@ const WHEEL_PER_STEP = 100
  *  translate into before running out of fractal pixels. With
  *  IMAGE_PX=1280 and VISIBLE_PX=1024, the margin is 128/1024 = 12.5%
  *  of the viewport on each side. */
-const CANVAS_MARGIN_FRAC = 0.125
+const CANVAS_MARGIN_FRAC = 0.0 // 4×4 grid has no margin
 /** Max world-pan speed in pixels per millisecond. Cap is enforced by
  *  wall-clock time (not per pointermove event), so very high pointer
  *  rates don't blow past it. At 1.5 px/ms the world can sweep across

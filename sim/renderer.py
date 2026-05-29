@@ -27,7 +27,7 @@ TILE_BYTES  = TILE_PIXELS * TILE_PIXELS // 2   # 32768
 # 5×5 grid of 256-px tiles: 1280-px rendered image, centre 1024 is the
 # browser-visible region, surrounding ring (128 px each side) is
 # pre-rendered pan margin.
-TILES_PER_IMAGE = 25
+TILES_PER_IMAGE = 16
 
 # Frame format from sim/cpp/src/response.hpp:
 #   byte 0    : message_type
