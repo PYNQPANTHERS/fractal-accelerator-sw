@@ -182,6 +182,14 @@ async def render_image(config: RenderConfig):
     # Collect all 16 frames in a single thread call. The C++ side has already
     # parallelised the compute — by the time request_stream returns the first
     # frame, all tiles are computed and sitting in write_frame buffers.
+    #
+    # FPGA-day cleanup: when the C++ subprocess is replaced by a Pynq
+    # driver, the underlying read is already non-blocking — the PL writes
+    # the framebuffer via AXI HP / DMA and signals "done" via an IRQ.
+    # At that point this `asyncio.to_thread(...)` wrapper can be dropped
+    # entirely in favour of a direct synchronous fetch on the event loop:
+    #   frames = pynq_driver.fetch_all(cmd)
+    # Saves ~3 ms of thread-pool dispatch + context switch per render.
     frames = await asyncio.to_thread(
         lambda: list(sim.request_stream(cmd, TILES_PER_IMAGE))
     )

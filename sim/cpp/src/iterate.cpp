@@ -1,51 +1,9 @@
 #include "iterate.hpp"
+#include "kernel.hpp"
 
 #include <cmath>
 
 namespace fractal_sim {
-
-namespace {
-
-// Iterate z^2 + c (or burning-ship variant) up to max_iter and return
-// the escape iteration count, or max_iter if it never escaped.
-inline int iterate_z2c(double z_re, double z_im,
-                       double c_re, double c_im,
-                       int max_iter,
-                       bool burning_ship) {
-    for (int i = 0; i < max_iter; ++i) {
-        if (burning_ship) {
-            z_re = std::fabs(z_re);
-            z_im = std::fabs(z_im);
-        }
-        // z = z*z + c
-        const double new_re = z_re * z_re - z_im * z_im + c_re;
-        const double new_im = 2.0 * z_re * z_im + c_im;
-        z_re = new_re;
-        z_im = new_im;
-
-        if (z_re * z_re + z_im * z_im > 4.0) {
-            return i;
-        }
-    }
-    return max_iter;
-}
-
-// Remap an escape iteration count (0..max_iter) to a 4-bit palette band
-// (0..15). Points that never escaped map to band 0 (the in-set colour).
-// Logarithmic banding keeps the boundary visible at any iteration cap —
-// without it, deep zooms collapse to a single band.
-inline uint8_t band_for(int iters, int max_iter) {
-    if (iters >= max_iter) return 0;
-    // log1p-scaled, then split into 15 outer bands (1..15).
-    const double t = std::log1p(static_cast<double>(iters))
-                   / std::log1p(static_cast<double>(max_iter));
-    int band = 1 + static_cast<int>(t * 14.999);
-    if (band < 1) band = 1;
-    if (band > 15) band = 15;
-    return static_cast<uint8_t>(band);
-}
-
-}  // anonymous namespace
 
 // Write a 4-bit band into the nibble-packed output buffer at (px, py).
 inline void write_pixel(TileBuffer& out, int px, int py, uint8_t band) {

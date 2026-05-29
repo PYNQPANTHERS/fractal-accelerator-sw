@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "iterate.hpp"
+#include "mariani_silver.hpp"
 #include "protocol.hpp"
 #include "response.hpp"
 
@@ -56,11 +57,25 @@ int main() {
                 threads.reserve(N_TILES);
                 for (int tile_id = 0; tile_id < N_TILES; ++tile_id) {
                     threads.emplace_back([&, tile_id]() {
-                        compute_tile(tile_bufs[tile_id], tile_id,
-                                     c.pan_x, c.pan_y, c.zoom, c.max_iter,
-                                     c.fractal_type,
-                                     c.julia_c_real, c.julia_c_imag,
-                                     c.preview);
+                        // Full quality goes through Mariani-Silver; preview
+                        // stays on the brute-force subsampled path because
+                        // M-S only helps on uniform regions and preview is
+                        // already so cheap that quadtree overhead would
+                        // erode the gain.
+                        if (c.preview) {
+                            compute_tile(tile_bufs[tile_id], tile_id,
+                                         c.pan_x, c.pan_y, c.zoom, c.max_iter,
+                                         c.fractal_type,
+                                         c.julia_c_real, c.julia_c_imag,
+                                         true);
+                        } else {
+                            compute_tile_mariani(tile_bufs[tile_id], tile_id,
+                                                 c.pan_x, c.pan_y, c.zoom,
+                                                 c.max_iter,
+                                                 c.fractal_type,
+                                                 c.julia_c_real,
+                                                 c.julia_c_imag);
+                        }
                     });
                 }
                 for (auto& t : threads) t.join();

@@ -15,6 +15,7 @@ import './styles.css'
 import { useRenderSocket } from './useRenderSocket'
 import { IMAGE_PX, Panel, type TileFrame } from './protocol'
 import { TilePainter } from './tilePainter'
+import { useTileWorker } from './useTileWorker'
 import { useViewState, type ViewState } from './useViewState'
 import { DebugPanel, DEFAULT_DEBUG_FLAGS, type DebugFlags } from './DebugPanel'
 import { FpsOverlay, useFpsCounters } from './FpsOverlay'
@@ -39,9 +40,21 @@ export default function App() {
   // Julia tracks the c implied by the Mandelbrot centre.
   const juliaCRef = useRef(JULIA_C_INITIAL)
 
-  const handleTile = useCallback((tile: TileFrame) => {
-    paintersRef.current[tile.panel]?.paint(tile)
-  }, [])
+  // Stable lookup the worker dispatcher uses to route bitmaps to the
+  // right painter once the worker has finished decoding them.
+  const getPainter = useCallback(
+    (panel: Panel) => paintersRef.current[panel],
+    [],
+  )
+  const tileWorker = useTileWorker(getPainter)
+
+  // Hot path now does the absolute minimum on the main thread: hand
+  // the payload to the worker as a transferable. Unpack + decode +
+  // bitmap creation all happen off-thread.
+  const handleTile = useCallback(
+    (tile: TileFrame) => tileWorker.enqueue(tile),
+    [tileWorker],
+  )
 
   const { state, send } = useRenderSocket(WS_URL, handleTile)
   const sendRef = useRef(send)
