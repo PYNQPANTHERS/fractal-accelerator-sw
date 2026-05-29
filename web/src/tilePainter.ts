@@ -34,8 +34,10 @@ export class TilePainter {
   // 6×6 grid (36 tiles) overflows JS's 32-bit bitwise ops.
   private tilesGot = new Set<number>()
   private currentSeq = -1
-  /** Called when a full frame has been swapped into the visible canvas. */
-  onFrameComplete: (() => void) | null = null
+  /** Called when a full frame has been swapped into the visible canvas.
+   *  Receives the frame_seq that just completed so callers can correlate
+   *  it with a render-request timestamp (latency measurement). */
+  onFrameComplete: ((seq: number) => void) | null = null
 
   constructor(canvas: HTMLCanvasElement) {
     const display = canvas.getContext('2d', { alpha: false })
@@ -71,7 +73,7 @@ export class TilePainter {
     if (this.tilesGot.size === TILES_PER_FRAME) {
       this.displayCtx.drawImage(this.staging, 0, 0)
       this.tilesGot.clear()
-      this.onFrameComplete?.()
+      this.onFrameComplete?.(tile.frameSeq)
     }
   }
 

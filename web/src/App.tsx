@@ -16,6 +16,8 @@ import { useRenderSocket } from './useRenderSocket'
 import { IMAGE_PX, Panel, type TileFrame } from './protocol'
 import { TilePainter } from './tilePainter'
 import { useViewState, type ViewState } from './useViewState'
+import { DebugPanel, DEFAULT_DEBUG_FLAGS, type DebugFlags } from './DebugPanel'
+import { FpsOverlay, useFpsCounters } from './FpsOverlay'
 
 type Mode = 'performance' | 'live_evolution'
 
@@ -28,6 +30,9 @@ const JULIA_C_INITIAL = { real: -0.7, imag: 0.27 }
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('performance')
+  const [debugOpen, setDebugOpen] = useState(false)
+  const [debugFlags, setDebugFlags] = useState<DebugFlags>(DEFAULT_DEBUG_FLAGS)
+  const { handle: fps, rates: fpsRates } = useFpsCounters()
   const paintersRef = useRef<Partial<Record<Panel, TilePainter>>>({})
   // Bumped on every set_view so server can drop stale tile frames.
   const seqRef = useRef(0)
@@ -55,10 +60,12 @@ export default function App() {
       if (panChanged) {
         juliaCRef.current = { real: next.panX, imag: next.panY }
       }
+      const seq = nextSeq()
+      fps.noteRender(seq)
       sendRef.current({
         type: 'set_view',
         panel_id: Panel.MandelbrotMain,
-        frame_seq: nextSeq(),
+        frame_seq: seq,
         pan_x: next.panX,
         pan_y: next.panY,
         zoom: next.zoom,
@@ -66,15 +73,17 @@ export default function App() {
         max_iter: maxIterFor(next.zoom),
       })
     },
-    [nextSeq],
+    [nextSeq, fps],
   )
 
   const commitJulia = useCallback(
     (next: ViewState) => {
+      const seq = nextSeq()
+      fps.noteRender(seq)
       sendRef.current({
         type: 'set_view',
         panel_id: Panel.JuliaMain,
-        frame_seq: nextSeq(),
+        frame_seq: seq,
         pan_x: next.panX,
         pan_y: next.panY,
         zoom: next.zoom,
@@ -84,7 +93,7 @@ export default function App() {
         max_iter: maxIterFor(next.zoom),
       })
     },
-    [nextSeq],
+    [nextSeq, fps],
   )
 
   // Both modes stream mid-drag; backpressure inside useViewState gates
@@ -108,30 +117,39 @@ export default function App() {
     sendRef.current({ type: 'set_mode', mode: next })
   }
 
+  // Frame-applied callbacks pipe through fps.notePaint so the overlay
+  // can show the actual render-completion rate and request→display lat.
+  const onMandelFrame = useCallback(
+    (seq: number) => {
+      fps.notePaint(seq)
+      mandelbrotView.notifyFrameApplied()
+    },
+    [fps, mandelbrotView.notifyFrameApplied],
+  )
+  const onJuliaFrame = useCallback(
+    (seq: number) => {
+      fps.notePaint(seq)
+      juliaView.notifyFrameApplied()
+    },
+    [fps, juliaView.notifyFrameApplied],
+  )
+
   // Stable ref callbacks — without `useMemo`, every App re-render (e.g. mode
   // toggle, view-state change) would hand React new function identities and
   // remount each canvas, wiping the painter state and flashing the canvas.
   const registerMandelbrotMain = useMemo(
     () => mergeRefs(
-      makeRegister(
-        paintersRef,
-        Panel.MandelbrotMain,
-        mandelbrotView.notifyFrameApplied,
-      ),
+      makeRegister(paintersRef, Panel.MandelbrotMain, onMandelFrame),
       mandelbrotView.canvasRef,
     ),
-    [mandelbrotView.canvasRef, mandelbrotView.notifyFrameApplied],
+    [mandelbrotView.canvasRef, onMandelFrame],
   )
   const registerJuliaMain = useMemo(
     () => mergeRefs(
-      makeRegister(
-        paintersRef,
-        Panel.JuliaMain,
-        juliaView.notifyFrameApplied,
-      ),
+      makeRegister(paintersRef, Panel.JuliaMain, onJuliaFrame),
       juliaView.canvasRef,
     ),
-    [juliaView.canvasRef, juliaView.notifyFrameApplied],
+    [juliaView.canvasRef, onJuliaFrame],
   )
   const registerMandelbrotMini = useMemo(
     () => makeRegister(paintersRef, Panel.MandelbrotMini),
@@ -193,10 +211,23 @@ export default function App() {
           }
         />
 
-        <button className="settings-btn" aria-label="Settings">
+        <button
+          className="settings-btn"
+          aria-label="Debug"
+          onClick={() => setDebugOpen((x) => !x)}
+        >
           <Cog />
         </button>
+
+        {debugFlags.fpsOverlay && <FpsOverlay rates={fpsRates} />}
       </main>
+
+      <DebugPanel
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        flags={debugFlags}
+        onChange={setDebugFlags}
+      />
     </div>
   )
 }
@@ -213,7 +244,7 @@ function mergeRefs<T>(
 function makeRegister(
   paintersRef: React.MutableRefObject<Partial<Record<Panel, TilePainter>>>,
   panel: Panel,
-  onFrameComplete: (() => void) | null = null,
+  onFrameComplete: ((seq: number) => void) | null = null,
 ) {
   return (canvas: HTMLCanvasElement | null) => {
     if (!canvas) {
