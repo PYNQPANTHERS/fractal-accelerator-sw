@@ -8,7 +8,7 @@
  * canvas atomically. Stale bitmaps (from older frame_seqs) are
  * dropped at the boundary.
  *
- * Memory: 2× canvas per panel (1280² RGBA ≈ 6.5 MB). Cheap on
+ * Memory: 2× canvas per panel (1024² RGBA ≈ 4 MB). Cheap on
  * desktop, fine on mobile.
  */
 import { PALETTE_RGBA } from './palette'

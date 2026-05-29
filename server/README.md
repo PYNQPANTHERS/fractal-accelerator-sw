@@ -20,7 +20,7 @@ Listens on `ws://localhost:8765` by default. Set `SERVER_HOST` / `SERVER_PORT` e
 
 ## Scheduling modes
 
-- **Performance** (default): active panel gets full renderer throughput. The other panel defers until the active one is idle for >50 ms.
+- **Performance** (default): active panel gets full renderer throughput. During an explicit drag interaction, background panels defer until the final settled view arrives.
 - **Live Evolution**: both panels interleave, each at roughly half the render rate. Trades throughput for the visual of both panels updating together.
 
 Switch via `{"type": "set_mode", "mode": "live_evolution"}` from the browser.

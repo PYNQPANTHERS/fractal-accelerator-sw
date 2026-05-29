@@ -23,7 +23,7 @@
  */
 import { useCallback, useRef, useState } from 'react'
 import { useGesture } from '@use-gesture/react'
-import { VISIBLE_PX } from './protocol'
+import { VISIBLE_PX, type InteractionPhase } from './protocol'
 
 export interface ViewState {
   panX: number
@@ -35,9 +35,7 @@ const ZOOM_MIN = 0
 const ZOOM_MAX = 15
 const WHEEL_PER_STEP = 100
 /** Fraction of the viewport (per side) of pre-rendered margin we can
- *  translate into before running out of fractal pixels. With
- *  IMAGE_PX=1280 and VISIBLE_PX=1024, the margin is 128/1024 = 12.5%
- *  of the viewport on each side. */
+ *  translate into before running out of fractal pixels. */
 const CANVAS_MARGIN_FRAC = 0.0 // 4×4 grid has no margin
 /** Max world-pan speed in pixels per millisecond. Cap is enforced by
  *  wall-clock time (not per pointermove event), so very high pointer
@@ -90,9 +88,14 @@ interface DragSession {
   cursorY: number
 }
 
+interface PendingCommit {
+  view: ViewState
+  interaction: InteractionPhase
+}
+
 export function useViewState(
   initial: ViewState,
-  onCommit: (next: ViewState) => void,
+  onCommit: (next: ViewState, interaction: InteractionPhase) => void,
   /** If true, stream renders mid-drag instead of only on release. */
   streamDuringDrag: boolean = false,
 ): ViewController {
@@ -108,7 +111,7 @@ export function useViewState(
   const inFlight = useRef(false)
   // If a new view appears while a render is in flight, stash it here.
   // Sent as soon as the in-flight render completes (last-write-wins).
-  const pending = useRef<ViewState | null>(null)
+  const pending = useRef<PendingCommit | null>(null)
 
   const writeTransform = useCallback((x: number, y: number) => {
     const el = canvasElRef.current
@@ -128,10 +131,10 @@ export function useViewState(
   }, [])
 
   const commit = useCallback(
-    (next: ViewState) => {
+    (next: ViewState, interaction: InteractionPhase = 'idle') => {
       setView(next)
       viewRef.current = next
-      onCommit(next)
+      onCommit(next, interaction)
     },
     [onCommit],
   )
@@ -201,7 +204,8 @@ export function useViewState(
     const stashed = pending.current
     if (stashed) {
       pending.current = null
-      let next = stashed
+      let next = stashed.view
+      let interaction = stashed.interaction
       if (sess) {
         const start = sess.startView
         const win = 4.0 / Math.pow(2, start.zoom)
@@ -212,10 +216,11 @@ export function useViewState(
         }
         sess.sentX = sess.worldX
         sess.sentY = sess.worldY
+        interaction = 'active'
       }
       inFlight.current = true
       viewRef.current = next
-      onCommit(next)
+      onCommit(next, interaction)
       return
     }
 
@@ -240,7 +245,7 @@ export function useViewState(
     sess.sentX = predX
     sess.sentY = predY
     viewRef.current = speculative
-    onCommit(speculative)
+    onCommit(speculative, 'active')
   }, [onCommit])
 
   const bind = useGesture(
@@ -295,12 +300,12 @@ export function useViewState(
         if (last) {
           drag.current = null
           if (inFlight.current) {
-            pending.current = next
+            pending.current = { view: next, interaction: 'final' }
             setView(next)
             viewRef.current = next
           } else {
             inFlight.current = true
-            commit(next)
+            commit(next, 'final')
           }
           return
         }
@@ -309,13 +314,13 @@ export function useViewState(
 
         if (!streamDuringDrag) return
         if (inFlight.current) {
-          pending.current = next
+          pending.current = { view: next, interaction: 'active' }
         } else {
           inFlight.current = true
           sess.sentX = sess.worldX
           sess.sentY = sess.worldY
           viewRef.current = next
-          onCommit(next)
+          onCommit(next, 'active')
         }
       },
       onWheel: ({ delta: [, dy], event }) => {
@@ -335,10 +340,10 @@ export function useViewState(
           setView(next)
           viewRef.current = next
           if (inFlight.current) {
-            pending.current = next
+            pending.current = { view: next, interaction: 'idle' }
           } else {
             inFlight.current = true
-            onCommit(next)
+            onCommit(next, 'idle')
           }
         }
       },

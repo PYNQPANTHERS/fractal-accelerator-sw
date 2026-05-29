@@ -149,7 +149,12 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                 prev = panel_state.get(msg.panel_id)
                 cfg = set_view_to_config(msg)
                 panel_state[msg.panel_id] = cfg
-                scheduler.push(msg.panel_id, cfg, msg.frame_seq)
+                scheduler.push(
+                    msg.panel_id,
+                    cfg,
+                    msg.frame_seq,
+                    interaction=msg.interaction,
+                )
 
                 # Mandelbrot pan changes Julia's c. Pure zoom doesn't:
                 # the crosshair stays on the same complex point, so no

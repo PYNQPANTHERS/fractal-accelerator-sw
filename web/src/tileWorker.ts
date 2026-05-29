@@ -11,7 +11,7 @@
  * can drawImage it onto staging in O(1) main-thread time.
  *
  * Replaces the inline paintAsync in TilePainter so deep-zoom renders
- * (which produce 25 tiles back-to-back) don't bottleneck the main
+ * (which produce 16 tiles back-to-back) don't bottleneck the main
  * thread's pan smoothness.
  */
 

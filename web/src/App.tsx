@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './styles.css'
 import { useRenderSocket } from './useRenderSocket'
-import { IMAGE_PX, Panel, type TileFrame } from './protocol'
+import { IMAGE_PX, Panel, type InteractionPhase, type TileFrame } from './protocol'
 import { TilePainter } from './tilePainter'
 import { useTileWorker } from './useTileWorker'
 import { useViewState, type ViewState } from './useViewState'
@@ -66,7 +66,7 @@ export default function App() {
   }, [])
 
   const commitMandelbrot = useCallback(
-    (next: ViewState) => {
+    (next: ViewState, interaction: InteractionPhase = 'idle') => {
       const panChanged =
         next.panX !== juliaCRef.current.real ||
         next.panY !== juliaCRef.current.imag
@@ -84,13 +84,14 @@ export default function App() {
         zoom: next.zoom,
         fractal_type: 'mandelbrot',
         max_iter: maxIterFor(next.zoom),
+        interaction,
       })
     },
     [nextSeq, fps],
   )
 
   const commitJulia = useCallback(
-    (next: ViewState) => {
+    (next: ViewState, interaction: InteractionPhase = 'idle') => {
       const seq = nextSeq()
       fps.noteRender(seq)
       sendRef.current({
@@ -104,17 +105,17 @@ export default function App() {
         julia_c_real: juliaCRef.current.real,
         julia_c_imag: juliaCRef.current.imag,
         max_iter: maxIterFor(next.zoom),
+        interaction,
       })
     },
     [nextSeq, fps],
   )
 
   // Both modes stream mid-drag; backpressure inside useViewState gates
-  // requests so the server never queues more than one render. What
-  // distinguishes the modes is *server-side* scheduling:
-  //   Performance    → Mandelbrot gets full sim throughput; Julia
-  //                    coupling waits 250ms (DEFER_MS) before rendering.
-  //   Live Evolution → both mains round-robin; Julia keeps up live.
+  // requests so the server never queues more than one render. Each
+  // request carries an interaction phase so Performance mode can hold
+  // Julia until the final settled Mandelbrot view, matching the FPGA
+  // "active surface owns the fabric" scheduling model.
   const mandelbrotView = useViewState(MANDELBROT_INITIAL, commitMandelbrot, true)
   const juliaView = useViewState(JULIA_INITIAL, commitJulia, true)
 

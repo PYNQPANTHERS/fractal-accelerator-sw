@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from sim.config import RenderConfig
@@ -61,6 +61,9 @@ class SetViewMessage:
     # "full" (default) for crisp output, "preview" for the fast
     # subsampled path the client uses during active drag.
     quality:   str = "full"
+    # "active" while a pointer drag is streaming, "final" for the
+    # release/settled viewport, "idle" for ordinary non-drag updates.
+    interaction: str = "idle"
 
 
 @dataclass
@@ -91,6 +94,9 @@ def parse_message(text: str) -> ParsedMessage:
             quality = str(data.get("quality", "full"))
             if quality not in ("full", "preview"):
                 quality = "full"
+            interaction = str(data.get("interaction", "idle"))
+            if interaction not in ("idle", "active", "final"):
+                interaction = "idle"
             return SetViewMessage(
                 panel_id     = int(data["panel_id"]),
                 frame_seq    = int(data.get("frame_seq", 0)),
@@ -102,6 +108,7 @@ def parse_message(text: str) -> ParsedMessage:
                 julia_c_imag = float(data.get("julia_c_imag", 0.0)),
                 max_iter     = int(data.get("max_iter", 256)),
                 quality      = quality,
+                interaction  = interaction,
             )
         except (KeyError, ValueError, TypeError):
             return UnknownMessage(raw=data)

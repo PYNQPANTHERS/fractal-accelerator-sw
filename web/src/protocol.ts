@@ -15,16 +15,14 @@
  * Client → server: JSON text frames.
  *   { type: "set_view", panel_id, frame_seq, pan_x, pan_y, zoom,
  *                       fractal_type: "mandelbrot" | "julia",
- *                       julia_c_real?, julia_c_imag?, max_iter? }
+ *                       julia_c_real?, julia_c_imag?, max_iter?,
+ *                       interaction?: "idle" | "active" | "final" }
  *   { type: "set_mode", mode: "performance" | "live_evolution" }
  */
 
 export const HEADER_BYTES = 16
 export const TILE_PX = 256
-/** 5×5 grid of 256-px tiles (25 tiles total). The centre 4×4 (1024 px)
- *  is the user's visible area; the surrounding ring (128 px each side)
- *  is pre-rendered margin so the canvas can pan into already-correct
- *  fractal pixels without round-tripping the sim/PL. */
+/** 4×4 grid of 256-px tiles (16 tiles total). */
 export const GRID = 4
 export const VISIBLE_PX = 1024
 export const IMAGE_PX = TILE_PX * GRID // 1024
@@ -132,6 +130,7 @@ export function tileGridPosition(tileId: number): { col: number; row: number } {
 }
 
 export type Quality = 'full' | 'preview'
+export type InteractionPhase = 'idle' | 'active' | 'final'
 
 export type ClientMessage =
   | {
@@ -148,5 +147,8 @@ export type ClientMessage =
       /** Optional. Defaults to "full". Server-side "preview" renders
        *  use the subsampled C++ path — ~3-4× faster, slightly blocky. */
       quality?: Quality
+      /** Optional. Lets the PS scheduler distinguish active drag work
+       *  from the final settled viewport without guessing from silence. */
+      interaction?: InteractionPhase
     }
   | { type: 'set_mode'; mode: 'performance' | 'live_evolution' }
