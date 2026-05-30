@@ -26,7 +26,12 @@ interface Props {
   onChange: (next: DebugFlags) => void
 }
 
-export function DebugPanel({ open, onClose, flags, onChange }: Props) {
+export function DebugPanel({
+  open,
+  onClose,
+  flags,
+  onChange,
+}: Props) {
   const set = <K extends keyof DebugFlags>(k: K, v: DebugFlags[K]) =>
     onChange({ ...flags, [k]: v })
 

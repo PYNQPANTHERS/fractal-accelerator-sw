@@ -11,6 +11,7 @@ import {
   parseMessage,
   Panel,
   type ClientMessage,
+  type TelemetryMessage,
   type TileFrame,
 } from './protocol'
 
@@ -27,6 +28,7 @@ const MAX_BACKOFF_MS = 4_000
 export function useRenderSocket(
   url: string,
   onTile: (tile: TileFrame) => void,
+  onTelemetry?: (msg: TelemetryMessage) => void,
 ): RenderSocket {
   const [state, setState] = useState<ConnState>('connecting')
   const wsRef = useRef<WebSocket | null>(null)
@@ -39,6 +41,8 @@ export function useRenderSocket(
   // Stable ref so the effect doesn't re-subscribe when onTile identity changes.
   const onTileRef = useRef(onTile)
   onTileRef.current = onTile
+  const onTelemetryRef = useRef(onTelemetry)
+  onTelemetryRef.current = onTelemetry
 
   useEffect(() => {
     let cancelled = false
@@ -59,7 +63,14 @@ export function useRenderSocket(
 
       ws.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
-          // Server-side JSON (status, errors). Ignored for now.
+          try {
+            const msg = JSON.parse(ev.data) as TelemetryMessage
+            if (msg.type === 'telemetry') {
+              onTelemetryRef.current?.(msg)
+            }
+          } catch (err) {
+            console.warn('[ws] bad json:', err)
+          }
           return
         }
         let frames: TileFrame[]
@@ -75,6 +86,13 @@ export function useRenderSocket(
         const first = frames[0]
         const seen = latestSeqRef.current[first.panel]
         if (seen >= 0 && isOlder(first.frameSeq, seen)) {
+          onTelemetryRef.current?.({
+            type: 'telemetry',
+            event: 'client_frame_dropped',
+            panel_id: first.panel,
+            frame_seq: first.frameSeq,
+            seen_frame_seq: seen,
+          })
           return
         }
         latestSeqRef.current[first.panel] = first.frameSeq

@@ -80,11 +80,23 @@ class SetMinimapsMessage:
 
 
 @dataclass
+class SetTelemetryMessage:
+    """Browser toggled workload telemetry streaming."""
+    enabled: bool
+
+
+@dataclass
 class UnknownMessage:
     raw: dict[str, Any]
 
 
-ParsedMessage = SetViewMessage | SetModeMessage | SetMinimapsMessage | UnknownMessage
+ParsedMessage = (
+    SetViewMessage
+    | SetModeMessage
+    | SetMinimapsMessage
+    | SetTelemetryMessage
+    | UnknownMessage
+)
 
 
 def parse_message(text: str) -> ParsedMessage:
@@ -134,6 +146,9 @@ def parse_message(text: str) -> ParsedMessage:
             )
         except (ValueError, TypeError):
             return UnknownMessage(raw=data)
+
+    if msg_type == "set_telemetry":
+        return SetTelemetryMessage(enabled=bool(data.get("enabled", False)))
 
     return UnknownMessage(raw=data)
 

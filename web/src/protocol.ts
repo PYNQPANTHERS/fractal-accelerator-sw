@@ -19,6 +19,7 @@
  *                       interaction?: "idle" | "active" | "final" }
  *   { type: "set_mode", mode: "performance" | "live_evolution" }
  *   { type: "set_minimaps", enabled, frame_seq }
+ *   { type: "set_telemetry", enabled }
  */
 
 export const HEADER_BYTES = 16
@@ -133,6 +134,68 @@ export function tileGridPosition(tileId: number): { col: number; row: number } {
 export type Quality = 'full' | 'preview'
 export type InteractionPhase = 'idle' | 'active' | 'final'
 
+export type TelemetryMessage =
+  | {
+      type: 'telemetry'
+      event: 'scheduler'
+      mode: 'performance' | 'live_evolution'
+      active_panel: Panel
+      interacting_panel: Panel | null
+      pending: Array<{
+        panel_id: Panel
+        frame_seq: number
+        quality: Quality
+      }>
+    }
+  | {
+      type: 'telemetry'
+      event: 'render_started'
+      panel_id: Panel
+      frame_seq: number
+      quality: Quality
+      max_iter: number
+      backend: string
+      tile_cols: number
+      tile_rows: number
+    }
+  | {
+      type: 'telemetry'
+      event: 'tile_done'
+      panel_id: Panel
+      frame_seq: number
+      tile_id: number
+      elapsed_ms: number
+      quality: Quality
+      backend: string
+      stage: 'available' | 'compute' | 'transfer'
+      tile_cols: number
+      tile_rows: number
+    }
+  | {
+      type: 'telemetry'
+      event: 'render_finished'
+      panel_id: Panel
+      frame_seq: number
+      elapsed_ms: number
+      tile_count: number
+      quality: Quality
+      backend: string
+    }
+  | {
+      type: 'telemetry'
+      event: 'render_dropped'
+      panel_id: Panel
+      frame_seq: number
+      reason: string
+    }
+  | {
+      type: 'telemetry'
+      event: 'client_frame_dropped'
+      panel_id: Panel
+      frame_seq: number
+      seen_frame_seq: number
+    }
+
 export type ClientMessage =
   | {
       type: 'set_view'
@@ -154,3 +217,4 @@ export type ClientMessage =
     }
   | { type: 'set_mode'; mode: 'performance' | 'live_evolution' }
   | { type: 'set_minimaps'; enabled: boolean; frame_seq: number }
+  | { type: 'set_telemetry'; enabled: boolean }

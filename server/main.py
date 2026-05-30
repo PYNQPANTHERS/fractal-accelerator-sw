@@ -11,8 +11,11 @@ Run:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+import json
 import logging
 import os
+import time
 
 import websockets
 from websockets.asyncio.server import ServerConnection as WebSocketServerProtocol
@@ -27,6 +30,7 @@ from server.protocol import (
     SetViewMessage,
     SetModeMessage,
     SetMinimapsMessage,
+    SetTelemetryMessage,
     UnknownMessage,
     PANEL_MANDELBROT_MAIN,
     PANEL_JULIA_MAIN,
@@ -44,6 +48,12 @@ PORT = int(os.environ.get("SERVER_PORT", "8765"))
 # the browser too slow and drop the current render.
 _MAX_SEND_BUFFER = 256 * 1024   # 256 KB — about 8 tiles worth
 _MINIMAP_MAX_ITER = 256
+_TELEMETRY_TILE_COLS = 4
+_TELEMETRY_TILE_ROWS = 4
+
+
+def _quality_label(config: RenderConfig) -> str:
+    return "preview" if config.preview else "full"
 
 
 def _mandelbrot_minimap_config() -> RenderConfig:
@@ -88,6 +98,28 @@ def _browser_can_receive(ws: WebSocketServerProtocol) -> bool:
         return True  # if we can't read the buffer size, assume OK
 
 
+async def _send_telemetry(
+    ws: WebSocketServerProtocol,
+    enabled: bool,
+    payload: dict,
+) -> None:
+    if not enabled:
+        return
+    await ws.send(json.dumps({"type": "telemetry", **payload}))
+
+
+async def _send_scheduler_snapshot(
+    ws: WebSocketServerProtocol,
+    scheduler: Scheduler,
+    enabled: bool,
+) -> None:
+    await _send_telemetry(
+        ws,
+        enabled,
+        {"event": "scheduler", **scheduler.snapshot()},
+    )
+
+
 async def _wait_for_scheduler(scheduler: Scheduler) -> None:
     """Wait until a pending job may be renderable, or new input arrives."""
     timeout = scheduler.seconds_until_next_job()
@@ -105,6 +137,7 @@ async def _wait_for_scheduler(scheduler: Scheduler) -> None:
 async def _render_and_stream(
     ws: WebSocketServerProtocol,
     scheduler: Scheduler,
+    telemetry_enabled: Callable[[], bool],
 ) -> None:
     """Pick the next job, render all 16 tiles, stream each to the browser.
 
@@ -131,16 +164,57 @@ async def _render_and_stream(
     # Fix 4: drop render if browser buffer is backed up.
     if not _browser_can_receive(ws):
         log.debug("backpressure: dropping render for panel=%d", result[0])
+        await _send_telemetry(
+            ws,
+            telemetry_enabled(),
+            {
+                "event": "render_dropped",
+                "reason": "browser_backpressure",
+                "panel_id": result[0],
+                "frame_seq": result[1].frame_seq,
+            },
+        )
         return
 
     panel_id, job = result
     log.info("rendering panel=%d frame_seq=%d", panel_id, job.frame_seq)
+    started = time.perf_counter()
+    await _send_telemetry(
+        ws,
+        telemetry_enabled(),
+        {
+            "event": "render_started",
+            "panel_id": panel_id,
+            "frame_seq": job.frame_seq,
+            "quality": _quality_label(job.config),
+            "max_iter": job.config.max_iter,
+            "backend": "sim",
+            "tile_cols": _TELEMETRY_TILE_COLS,
+            "tile_rows": _TELEMETRY_TILE_ROWS,
+        },
+    )
 
     # Collect all tiles for this render, then send them in one binary
     # WS frame. Avoids per-tile send overhead (~0.2 ms × N tiles).
     tiles: list[tuple[int, bytes]] = []
-    async for tile_id, tile_bytes in render_image(job.config):
+    async for tile_id, tile_bytes, tile_elapsed_ms in render_image(job.config):
         tiles.append((tile_id, tile_bytes))
+        await _send_telemetry(
+            ws,
+            telemetry_enabled(),
+            {
+                "event": "tile_done",
+                "panel_id": panel_id,
+                "frame_seq": job.frame_seq,
+                "tile_id": tile_id,
+                "elapsed_ms": round(tile_elapsed_ms, 3),
+                "quality": _quality_label(job.config),
+                "backend": "sim",
+                "stage": "available",
+                "tile_cols": _TELEMETRY_TILE_COLS,
+                "tile_rows": _TELEMETRY_TILE_ROWS,
+            },
+        )
     if tiles:
         bundle = pack_tile_bundle(
             panel_id=panel_id,
@@ -148,6 +222,19 @@ async def _render_and_stream(
             tiles=tiles,
         )
         await ws.send(bundle)
+        await _send_telemetry(
+            ws,
+            telemetry_enabled(),
+            {
+                "event": "render_finished",
+                "panel_id": panel_id,
+                "frame_seq": job.frame_seq,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                "tile_count": len(tiles),
+                "quality": _quality_label(job.config),
+                "backend": "sim",
+            },
+        )
 
 
 async def _handle(ws: WebSocketServerProtocol) -> None:
@@ -155,6 +242,7 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
     log.info("browser connected from %s", ws.remote_address)
     scheduler = Scheduler()
     minimaps_enabled = True
+    telemetry_enabled = False
 
     # Fix 3 — Per-panel state: track the last known config for each panel
     # so we can preserve Julia zoom/pan across Mandelbrot panning.
@@ -185,7 +273,7 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
     queue_minimap(PANEL_JULIA_MINIMAP,      _default_julia_minimap,      frame_seq=0)
 
     async def recv_loop() -> None:
-        nonlocal minimaps_enabled
+        nonlocal minimaps_enabled, telemetry_enabled
 
         async for raw in ws:
             if not isinstance(raw, str):
@@ -202,6 +290,7 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                     msg.frame_seq,
                     interaction=msg.interaction,
                 )
+                await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
 
                 # Mandelbrot pan changes Julia's c. Pure zoom doesn't:
                 # the crosshair stays on the same complex point, so no
@@ -232,6 +321,11 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                         panel_state[PANEL_JULIA_MAIN] = julia_cfg
                         scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq,
                                        mark_active=False)
+                        await _send_scheduler_snapshot(
+                            ws,
+                            scheduler,
+                            telemetry_enabled,
+                        )
                     existing_julia_minimap = panel_state.get(
                         PANEL_JULIA_MINIMAP,
                         _default_julia_minimap,
@@ -252,6 +346,11 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                             julia_minimap_cfg,
                             msg.frame_seq,
                         )
+                        await _send_scheduler_snapshot(
+                            ws,
+                            scheduler,
+                            telemetry_enabled,
+                        )
                 elif msg.panel_id == PANEL_JULIA_MAIN:
                     existing_julia_minimap = panel_state.get(
                         PANEL_JULIA_MINIMAP,
@@ -267,9 +366,15 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                             julia_minimap_cfg,
                             msg.frame_seq,
                         )
+                        await _send_scheduler_snapshot(
+                            ws,
+                            scheduler,
+                            telemetry_enabled,
+                        )
 
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)
+                await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
                 log.info("mode → %s", msg.mode)
 
             elif isinstance(msg, SetMinimapsMessage):
@@ -292,14 +397,24 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                         PANEL_MANDELBROT_MINIMAP,
                         PANEL_JULIA_MINIMAP,
                     )
+                await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
                 log.info("minimaps → %s", "on" if minimaps_enabled else "off")
+
+            elif isinstance(msg, SetTelemetryMessage):
+                telemetry_enabled = msg.enabled
+                await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
+                log.info("telemetry → %s", "on" if telemetry_enabled else "off")
 
             elif isinstance(msg, UnknownMessage):
                 log.warning("unknown message: %s", msg.raw)
 
     async def render_loop() -> None:
         while True:
-            await _render_and_stream(ws, scheduler)
+            await _render_and_stream(
+                ws,
+                scheduler,
+                lambda: telemetry_enabled,
+            )
 
     try:
         await asyncio.gather(recv_loop(), render_loop())

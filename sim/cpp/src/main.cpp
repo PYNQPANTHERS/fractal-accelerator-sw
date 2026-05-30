@@ -4,6 +4,9 @@
 // framed binary responses to stdout, logs diagnostics to stderr.
 
 #include <iostream>
+#include <condition_variable>
+#include <mutex>
+#include <queue>
 #include <string>
 #include <thread>
 #include <variant>
@@ -53,6 +56,14 @@ int main() {
 
                 // Compute all tiles in parallel — each tile is independent.
                 // One thread per tile; tiles are small so 16 threads is fine.
+                // Workers notify the main thread as each tile completes. The
+                // main thread remains the only stdout writer, matching the
+                // future FPGA shape: tile-done events arrive independently,
+                // but the PS-side driver serialises them onto the wire.
+                std::mutex done_mutex;
+                std::condition_variable done_cv;
+                std::queue<int> done_tiles;
+
                 std::vector<std::thread> threads;
                 threads.reserve(N_TILES);
                 for (int tile_id = 0; tile_id < N_TILES; ++tile_id) {
@@ -76,18 +87,27 @@ int main() {
                                                  c.julia_c_real,
                                                  c.julia_c_imag);
                         }
+                        {
+                            std::lock_guard<std::mutex> lock(done_mutex);
+                            done_tiles.push(tile_id);
+                        }
+                        done_cv.notify_one();
                     });
                 }
-                for (auto& t : threads) t.join();
 
-                // Write all tiles in order after compute — single writer,
-                // no stdout contention from the threads.
-                for (int tile_id = 0; tile_id < N_TILES; ++tile_id) {
+                for (int written = 0; written < N_TILES; ++written) {
+                    std::unique_lock<std::mutex> lock(done_mutex);
+                    done_cv.wait(lock, [&]() { return !done_tiles.empty(); });
+                    const int tile_id = done_tiles.front();
+                    done_tiles.pop();
+                    lock.unlock();
+
                     write_frame(MessageType::Tile,
                                 static_cast<uint8_t>(tile_id),
                                 tile_bufs[tile_id].data(),
                                 static_cast<uint32_t>(tile_bufs[tile_id].size()));
                 }
+                for (auto& t : threads) t.join();
 
             } else if constexpr (std::is_same_v<T, ParseError>) {
                 std::cerr << "fractal_sim: parse error: " << c.message << std::endl;

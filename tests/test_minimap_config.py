@@ -4,7 +4,7 @@ from server.main import (
     _julia_minimap_config,
     _julia_minimap_needs_render,
 )
-from server.protocol import SetMinimapsMessage, parse_message
+from server.protocol import SetMinimapsMessage, SetTelemetryMessage, parse_message
 from sim.config import RenderConfig
 
 
@@ -61,3 +61,10 @@ def test_parse_set_minimaps_message():
     assert isinstance(msg, SetMinimapsMessage)
     assert msg.enabled is False
     assert msg.frame_seq == 99
+
+
+def test_parse_set_telemetry_message():
+    msg = parse_message('{"type":"set_telemetry","enabled":true}')
+
+    assert isinstance(msg, SetTelemetryMessage)
+    assert msg.enabled is True

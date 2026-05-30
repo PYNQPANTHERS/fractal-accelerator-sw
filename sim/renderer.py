@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+from collections.abc import Iterator
 import json
 import struct
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from sim.config import RenderConfig
@@ -158,13 +160,13 @@ def render_tile(config: RenderConfig, tile_id: int) -> bytes:
 
 
 async def render_image(config: RenderConfig):
-    """Render all 16 tiles in one command, yielding (tile_id, bytes) per tile.
+    """Render all 16 tiles, yielding (tile_id, bytes, elapsed_ms) per tile.
 
     One round trip to the C++ binary (render_image command). The binary
-    computes all 16 tiles in parallel threads, then streams each frame back.
-    All frames are collected in one asyncio.to_thread call — no per-frame
-    queue overhead — then yielded synchronously. The event loop is free for
-    the full duration of the C++ compute.
+    computes all 16 tiles in parallel threads and streams each frame back
+    as its worker completes. The elapsed_ms value is measured at the Python
+    driver boundary, which mirrors the future Pynq path: tile-done IRQ or
+    status event received by PS, then forwarded to the websocket layer.
     """
     cmd = {
         "cmd":          "render_image",
@@ -179,29 +181,45 @@ async def render_image(config: RenderConfig):
     }
     sim = _get_sim()
 
-    # Collect all 16 frames in a single thread call. The C++ side has already
-    # parallelised the compute — by the time request_stream returns the first
-    # frame, all tiles are computed and sitting in write_frame buffers.
-    #
-    # FPGA-day cleanup: when the C++ subprocess is replaced by a Pynq
-    # driver, the underlying read is already non-blocking — the PL writes
-    # the framebuffer via AXI HP / DMA and signals "done" via an IRQ.
-    # At that point this `asyncio.to_thread(...)` wrapper can be dropped
-    # entirely in favour of a direct synchronous fetch on the event loop:
-    #   frames = pynq_driver.fetch_all(cmd)
-    # Saves ~3 ms of thread-pool dispatch + context switch per render.
-    frames = await asyncio.to_thread(
-        lambda: list(sim.request_stream(cmd, TILES_PER_IMAGE))
-    )
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[
+        tuple[float, int, int, bytes] | BaseException | None
+    ] = asyncio.Queue()
+    started = time.perf_counter()
 
-    for msg_type, tile_id, payload in frames:
+    def stream_frames() -> None:
+        try:
+            for msg_type, tile_id, payload in sim.request_stream(
+                cmd,
+                TILES_PER_IMAGE,
+            ):
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    (elapsed_ms, msg_type, tile_id, payload),
+                )
+        except BaseException as exc:
+            loop.call_soon_threadsafe(queue.put_nowait, exc)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    threading.Thread(target=stream_frames, daemon=True).start()
+
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        if isinstance(item, BaseException):
+            raise item
+
+        elapsed_ms, msg_type, tile_id, payload = item
         if msg_type == _MSG_ERROR:
             raise SimError(payload.decode("utf-8", errors="replace"))
         if msg_type != _MSG_TILE:
             raise SimError(f"expected tile, got {msg_type:#x}")
         if len(payload) != TILE_BYTES:
             raise SimError(f"expected {TILE_BYTES} bytes, got {len(payload)}")
-        yield tile_id, payload
+        yield tile_id, payload, elapsed_ms
 
 
 def ping() -> None:

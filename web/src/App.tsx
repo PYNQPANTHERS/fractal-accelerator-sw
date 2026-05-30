@@ -25,6 +25,10 @@ import { useTileWorker } from './useTileWorker'
 import { useViewState, type ViewState } from './useViewState'
 import { DebugPanel, DEFAULT_DEBUG_FLAGS, type DebugFlags } from './DebugPanel'
 import { FpsOverlay, useFpsCounters } from './FpsOverlay'
+import {
+  FloatingWorkloadPanel,
+  useWorkloadTelemetry,
+} from './WorkloadInspector'
 
 type Mode = 'performance' | 'live_evolution'
 
@@ -40,8 +44,10 @@ export default function App() {
   const modeRef = useRef(mode)
   modeRef.current = mode
   const [debugOpen, setDebugOpen] = useState(false)
+  const [workloadOpen, setWorkloadOpen] = useState(false)
   const [debugFlags, setDebugFlags] = useState<DebugFlags>(DEFAULT_DEBUG_FLAGS)
   const { handle: fps, rates: fpsRates } = useFpsCounters()
+  const workload = useWorkloadTelemetry()
   const paintersRef = useRef<Partial<Record<Panel, TilePainter>>>({})
   // Bumped on every set_view so server can drop stale tile frames.
   const seqRef = useRef(0)
@@ -64,7 +70,11 @@ export default function App() {
     [tileWorker],
   )
 
-  const { state, send } = useRenderSocket(WS_URL, handleTile)
+  const { state, send } = useRenderSocket(
+    WS_URL,
+    handleTile,
+    workload.handleTelemetry,
+  )
   const sendRef = useRef(send)
   sendRef.current = send
 
@@ -147,6 +157,14 @@ export default function App() {
       frame_seq: nextSeq(),
     })
   }, [state, debugFlags.minimaps, nextSeq])
+
+  useEffect(() => {
+    if (state !== 'open') return
+    sendRef.current({
+      type: 'set_telemetry',
+      enabled: workloadOpen,
+    })
+  }, [state, workloadOpen])
 
   const onModeChange = (next: Mode) => {
     setMode(next)
@@ -279,6 +297,13 @@ export default function App() {
         </button>
 
         {debugFlags.fpsOverlay && <FpsOverlay rates={fpsRates} />}
+
+        <FloatingWorkloadPanel
+          open={workloadOpen}
+          onOpen={() => setWorkloadOpen(true)}
+          onClose={() => setWorkloadOpen(false)}
+          snapshot={workload.snapshot}
+        />
       </main>
 
       <DebugPanel

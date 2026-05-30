@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from sim.config import RenderConfig
 from server.protocol import (
@@ -83,6 +83,22 @@ class Scheduler:
         for panel_id in panel_ids:
             self._pending.pop(panel_id, None)
         self.job_available.set()
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-friendly view of scheduler state for telemetry."""
+        return {
+            "mode": self.mode,
+            "active_panel": self._active_panel,
+            "interacting_panel": self._interacting_panel,
+            "pending": [
+                {
+                    "panel_id": panel_id,
+                    "frame_seq": job.frame_seq,
+                    "quality": "preview" if job.config.preview else "full",
+                }
+                for panel_id, job in sorted(self._pending.items())
+            ],
+        }
 
     def has_pending(self) -> bool:
         """True if any job is queued."""
