@@ -17,3 +17,4 @@ class RenderConfig:
     julia_c_real: float = 0.0
     julia_c_imag: float = 0.0
     max_iter: int = 256
+    preview: bool = False     # subsampled render (faster, slightly blocky)

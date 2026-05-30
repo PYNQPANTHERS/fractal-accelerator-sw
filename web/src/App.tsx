@@ -1,0 +1,470 @@
+/**
+ * Top-level layout for the fractal explorer.
+ *
+ * Two full-bleed viewports (Mandelbrot | Julia) with optional minimaps
+ * overlaid in the lower-left. Each viewport owns a 1024×1024 canvas
+ * driven by a TilePainter; incoming binary frames are routed to the
+ * painter whose panel id matches.
+ *
+ * Interaction: drag to pan, wheel to step zoom by ±1 (matches the FPGA's
+ * 4-bit zoom register). Mandelbrot pan/zoom is the input — the server
+ * automatically re-renders Julia with c = Mandelbrot centre.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import './styles.css'
+import { useRenderSocket } from './useRenderSocket'
+import {
+  IMAGE_PX,
+  Panel,
+  type InteractionPhase,
+  type Quality,
+  type TileFrame,
+} from './protocol'
+import { TilePainter } from './tilePainter'
+import { useTileWorker } from './useTileWorker'
+import { useViewState, type ViewState } from './useViewState'
+import { DebugPanel, DEFAULT_DEBUG_FLAGS, type DebugFlags } from './DebugPanel'
+import { FpsOverlay, useFpsCounters } from './FpsOverlay'
+import {
+  FloatingWorkloadPanel,
+  useWorkloadTelemetry,
+} from './WorkloadInspector'
+
+type Mode = 'performance' | 'live_evolution'
+
+const WS_URL =
+  import.meta.env.VITE_WS_URL ?? `ws://${window.location.hostname}:8765`
+
+const MANDELBROT_INITIAL: ViewState = { panX: -0.5, panY: 0, zoom: 0 }
+const JULIA_INITIAL: ViewState = { panX: 0, panY: 0, zoom: 0 }
+const JULIA_C_INITIAL = { real: -0.7, imag: 0.27 }
+
+export default function App() {
+  const [mode, setMode] = useState<Mode>('performance')
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  const [debugOpen, setDebugOpen] = useState(false)
+  const [workloadOpen, setWorkloadOpen] = useState(false)
+  const [debugFlags, setDebugFlags] = useState<DebugFlags>(DEFAULT_DEBUG_FLAGS)
+  const { handle: fps, rates: fpsRates } = useFpsCounters()
+  const workload = useWorkloadTelemetry()
+  const paintersRef = useRef<Partial<Record<Panel, TilePainter>>>({})
+  // Bumped on every set_view so server can drop stale tile frames.
+  const seqRef = useRef(0)
+  // Julia tracks the c implied by the Mandelbrot centre.
+  const juliaCRef = useRef(JULIA_C_INITIAL)
+
+  // Stable lookup the worker dispatcher uses to route bitmaps to the
+  // right painter once the worker has finished decoding them.
+  const getPainter = useCallback(
+    (panel: Panel) => paintersRef.current[panel],
+    [],
+  )
+  const tileWorker = useTileWorker(getPainter)
+
+  // Hot path now does the absolute minimum on the main thread: hand
+  // the payload to the worker as a transferable. Unpack + decode +
+  // bitmap creation all happen off-thread.
+  const handleTile = useCallback(
+    (tile: TileFrame) => tileWorker.enqueue(tile),
+    [tileWorker],
+  )
+
+  const { state, send } = useRenderSocket(
+    WS_URL,
+    handleTile,
+    workload.handleTelemetry,
+  )
+  const sendRef = useRef(send)
+  sendRef.current = send
+
+  const nextSeq = useCallback(() => {
+    seqRef.current = (seqRef.current + 1) & 0xffff
+    return seqRef.current
+  }, [])
+
+  const commitMandelbrot = useCallback(
+    (next: ViewState, interaction: InteractionPhase = 'idle') => {
+      const panChanged =
+        next.panX !== juliaCRef.current.real ||
+        next.panY !== juliaCRef.current.imag
+      if (panChanged) {
+        juliaCRef.current = { real: next.panX, imag: next.panY }
+      }
+      const seq = nextSeq()
+      fps.noteRender(seq, Panel.MandelbrotMain)
+      if (panChanged) {
+        fps.noteRender(seq, Panel.JuliaMain)
+      }
+      sendRef.current({
+        type: 'set_view',
+        panel_id: Panel.MandelbrotMain,
+        frame_seq: seq,
+        pan_x: next.panX,
+        pan_y: next.panY,
+        zoom: next.zoom,
+        fractal_type: 'mandelbrot',
+        max_iter: maxIterFor(next.zoom, interaction, modeRef.current),
+        quality: qualityFor(interaction, modeRef.current),
+        interaction,
+      })
+    },
+    [nextSeq, fps],
+  )
+
+  const commitJulia = useCallback(
+    (next: ViewState, interaction: InteractionPhase = 'idle') => {
+      const seq = nextSeq()
+      fps.noteRender(seq, Panel.JuliaMain)
+      sendRef.current({
+        type: 'set_view',
+        panel_id: Panel.JuliaMain,
+        frame_seq: seq,
+        pan_x: next.panX,
+        pan_y: next.panY,
+        zoom: next.zoom,
+        fractal_type: 'julia',
+        julia_c_real: juliaCRef.current.real,
+        julia_c_imag: juliaCRef.current.imag,
+        max_iter: maxIterFor(next.zoom, interaction, modeRef.current),
+        quality: qualityFor(interaction, modeRef.current),
+        interaction,
+      })
+    },
+    [nextSeq, fps],
+  )
+
+  // Both modes stream mid-drag; backpressure inside useViewState gates
+  // requests so the server never queues more than one render. Each
+  // request carries an interaction phase so Performance mode can give
+  // the active surface first refusal while still letting Julia fill
+  // renderer bubbles between Mandelbrot frames.
+  const mandelbrotView = useViewState(MANDELBROT_INITIAL, commitMandelbrot, true)
+  const juliaView = useViewState(JULIA_INITIAL, commitJulia, true)
+
+  // Fire initial views once the socket is open.
+  useEffect(() => {
+    if (state !== 'open') return
+    commitMandelbrot(MANDELBROT_INITIAL)
+    commitJulia(JULIA_INITIAL)
+  }, [state, commitMandelbrot, commitJulia])
+
+  useEffect(() => {
+    if (state !== 'open' || debugFlags.minimaps) return
+    sendRef.current({
+      type: 'set_minimaps',
+      enabled: false,
+      frame_seq: nextSeq(),
+    })
+  }, [state, debugFlags.minimaps, nextSeq])
+
+  useEffect(() => {
+    if (state !== 'open') return
+    sendRef.current({
+      type: 'set_telemetry',
+      enabled: workloadOpen,
+    })
+  }, [state, workloadOpen])
+
+  const onModeChange = (next: Mode) => {
+    setMode(next)
+    sendRef.current({ type: 'set_mode', mode: next })
+  }
+
+  const onDebugFlagsChange = (next: DebugFlags) => {
+    if (next.minimaps !== debugFlags.minimaps) {
+      sendRef.current({
+        type: 'set_minimaps',
+        enabled: next.minimaps,
+        frame_seq: nextSeq(),
+      })
+    }
+    setDebugFlags(next)
+  }
+
+  // Frame-applied callbacks pipe through fps.notePaint so the overlay
+  // can show the actual render-completion rate and request→display lat.
+  const onMandelFrame = useCallback(
+    (seq: number) => {
+      fps.notePaint(seq, Panel.MandelbrotMain)
+      mandelbrotView.notifyFrameApplied()
+    },
+    [fps, mandelbrotView.notifyFrameApplied],
+  )
+  const onJuliaFrame = useCallback(
+    (seq: number) => {
+      fps.notePaint(seq, Panel.JuliaMain)
+      juliaView.notifyFrameApplied()
+    },
+    [fps, juliaView.notifyFrameApplied],
+  )
+
+  // Stable ref callbacks — without `useMemo`, every App re-render (e.g. mode
+  // toggle, view-state change) would hand React new function identities and
+  // remount each canvas, wiping the painter state and flashing the canvas.
+  const registerMandelbrotMain = useMemo(
+    () => mergeRefs(
+      makeRegister(paintersRef, Panel.MandelbrotMain, onMandelFrame),
+      mandelbrotView.canvasRef,
+    ),
+    [mandelbrotView.canvasRef, onMandelFrame],
+  )
+  const registerJuliaMain = useMemo(
+    () => mergeRefs(
+      makeRegister(paintersRef, Panel.JuliaMain, onJuliaFrame),
+      juliaView.canvasRef,
+    ),
+    [juliaView.canvasRef, onJuliaFrame],
+  )
+  const registerMandelbrotMini = useMemo(
+    () => makeRegister(paintersRef, Panel.MandelbrotMini),
+    [],
+  )
+  const registerJuliaMini = useMemo(
+    () => makeRegister(paintersRef, Panel.JuliaMini),
+    [],
+  )
+
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="header-title">
+          <h1>
+            Pynq<em>Zoom</em>
+          </h1>
+        </div>
+        <div
+          className={`mode-toggle mode-toggle-${mode}`}
+          role="tablist"
+          aria-label="Render mode"
+        >
+          <span className="mode-toggle-indicator" aria-hidden="true" />
+          <button
+            className={mode === 'performance' ? 'active' : ''}
+            onClick={() => onModeChange('performance')}
+            role="tab"
+            aria-selected={mode === 'performance'}
+          >
+            Performance
+          </button>
+          <button
+            className={mode === 'live_evolution' ? 'active' : ''}
+            onClick={() => onModeChange('live_evolution')}
+            role="tab"
+            aria-selected={mode === 'live_evolution'}
+          >
+            Live Evolution
+          </button>
+        </div>
+        <span className="header-meta">
+          <span className={`status status-${state}`}>{state}</span>
+          <span className="sep">/</span>
+          v0.1
+        </span>
+      </header>
+
+      <main className="viewports">
+        <Viewport
+          name="Mandelbrot"
+          view={mandelbrotView.view}
+          bind={mandelbrotView.bind}
+          showCrosshair
+          canvasRef={registerMandelbrotMain}
+          minimapCanvasRef={registerMandelbrotMini}
+          minimapCenterX={MANDELBROT_INITIAL.panX}
+          showMinimap={debugFlags.minimaps}
+          formatCoord={formatMandelbrotCoord}
+        />
+        <Viewport
+          name="Julia"
+          view={juliaView.view}
+          bind={juliaView.bind}
+          canvasRef={registerJuliaMain}
+          minimapCanvasRef={registerJuliaMini}
+          minimapCenterX={JULIA_INITIAL.panX}
+          showMinimap={debugFlags.minimaps}
+          formatCoord={(v) =>
+            `c = ${formatNumber(juliaCRef.current.real)} + ${formatNumber(juliaCRef.current.imag)}i  ·  ×${zoomLabel(v.zoom)}`
+          }
+        />
+
+        <button
+          className="settings-btn"
+          aria-label="Debug"
+          onClick={() => setDebugOpen((x) => !x)}
+        >
+          <Cog />
+        </button>
+
+        {debugFlags.fpsOverlay && <FpsOverlay rates={fpsRates} />}
+
+        <FloatingWorkloadPanel
+          open={workloadOpen}
+          onOpen={() => setWorkloadOpen(true)}
+          onClose={() => setWorkloadOpen(false)}
+          snapshot={workload.snapshot}
+        />
+      </main>
+
+      <DebugPanel
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        flags={debugFlags}
+        onChange={onDebugFlagsChange}
+      />
+    </div>
+  )
+}
+
+/** Fan-out a ref to multiple consumers. */
+function mergeRefs<T>(
+  ...refs: Array<(value: T | null) => void>
+): (value: T | null) => void {
+  return (value) => {
+    for (const ref of refs) ref(value)
+  }
+}
+
+function makeRegister(
+  paintersRef: React.MutableRefObject<Partial<Record<Panel, TilePainter>>>,
+  panel: Panel,
+  onFrameComplete: ((seq: number) => void) | null = null,
+) {
+  return (canvas: HTMLCanvasElement | null) => {
+    if (!canvas) {
+      delete paintersRef.current[panel]
+      return
+    }
+    const existing = paintersRef.current[panel]
+    if (existing?.canvas === canvas) {
+      // Same canvas across re-renders: just update the callback.
+      existing.onFrameComplete = onFrameComplete
+      return
+    }
+    const painter = new TilePainter(canvas)
+    painter.onFrameComplete = onFrameComplete
+    painter.clear()
+    paintersRef.current[panel] = painter
+  }
+}
+
+function Viewport({
+  name,
+  view,
+  bind,
+  showCrosshair = false,
+  canvasRef,
+  minimapCanvasRef,
+  minimapCenterX,
+  showMinimap,
+  formatCoord,
+}: {
+  name: string
+  view: ViewState
+  bind: ReturnType<typeof useViewState>['bind']
+  showCrosshair?: boolean
+  canvasRef: (canvas: HTMLCanvasElement | null) => void
+  minimapCanvasRef: (canvas: HTMLCanvasElement | null) => void
+  minimapCenterX: number
+  showMinimap: boolean
+  formatCoord: (v: ViewState) => string
+}) {
+  return (
+    <section className="viewport" {...bind()}>
+      <canvas
+        className="viewport-canvas"
+        width={IMAGE_PX}
+        height={IMAGE_PX}
+        ref={canvasRef}
+      />
+      <div className="viewport-label" data-coord={formatCoord(view)}>
+        {name}
+      </div>
+      {showCrosshair && <div className="viewport-crosshair" />}
+      {showMinimap && (
+        <div className="minimap" role="img" aria-label={`${name} minimap`}>
+          <canvas
+            className="minimap-canvas"
+            width={IMAGE_PX}
+            height={IMAGE_PX}
+            ref={minimapCanvasRef}
+          />
+          <div
+            className="minimap-viewrect"
+            style={viewRectStyle(view, minimapCenterX)}
+          />
+          <span className="minimap-label">{name}</span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function viewRectStyle(
+  view: ViewState,
+  minimapCenterX: number,
+): React.CSSProperties {
+  // Minimap shows zoom=0 (window 4.0 wide). Mandelbrot and Julia use
+  // different canonical centres, so the view rectangle takes that centre
+  // from the owning viewport.
+  // The viewrect represents the visible region at the current zoom/pan.
+  // We approximate by scaling the rect to a fraction of the minimap.
+  const minimapWindow = 4.0
+  const visibleWindow = 4.0 / Math.pow(2, view.zoom)
+  const size = (visibleWindow / minimapWindow) * 100
+  // Centre the rect on the pan position relative to the minimap centre.
+  const left =
+    50 + ((view.panX - minimapCenterX) / minimapWindow) * 100 - size / 2
+  const top = 50 + (view.panY / minimapWindow) * 100 - size / 2
+  return {
+    left: `${left}%`,
+    top: `${top}%`,
+    width: `${size}%`,
+    height: `${size}%`,
+  }
+}
+
+function formatMandelbrotCoord(v: ViewState): string {
+  return `${formatNumber(v.panX)} + ${formatNumber(v.panY)}i  ·  ×${zoomLabel(v.zoom)}`
+}
+
+function formatNumber(n: number): string {
+  const sign = n < 0 ? '−' : ''
+  return `${sign}${Math.abs(n).toFixed(3)}`
+}
+
+function zoomLabel(zoom: number): string {
+  return Math.pow(2, zoom).toFixed(zoom > 6 ? 0 : 1)
+}
+
+// More iterations at higher zoom — at zoom 0 the boundary is fat and 64
+// iters resolve it cleanly; at zoom 12 the boundary is hair-thin and
+// most pixels need 1000+ iterations to escape. Capped so deep zoom
+// renders stay interactive.
+function maxIterFor(
+  zoom: number,
+  interaction: InteractionPhase = 'idle',
+  mode: Mode = 'live_evolution',
+): number {
+  const full = Math.min(1500, 64 + zoom * 96)
+  if (mode !== 'performance' || interaction !== 'active') return full
+  return Math.min(full, 512, 48 + zoom * 40)
+}
+
+function qualityFor(
+  interaction: InteractionPhase,
+  mode: Mode,
+): Quality {
+  return mode === 'performance' && interaction === 'active'
+    ? 'preview'
+    : 'full'
+}
+
+function Cog() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+  )
+}
