@@ -8,6 +8,14 @@ Last updated: 2026-05-30.
 
 ## Current Render Shape
 
+- **Single simulator backend**: the app/server path uses one simulator binary,
+  `sim/cpp/build/fractal_sim`, via `sim/renderer.py`.
+- **Mariani-Silver full-quality path**: normal settled renders use the
+  Mariani-Silver adaptive renderer, matching the intended FPGA algorithm in
+  `fractal-accelerator-rtl`.
+- **Preview is an in-simulator shortcut**: active Performance-mode pan/zoom can
+  request a subsampled preview kernel from the same simulator. It is not a
+  second simulator implementation.
 - **4 x 4 tile grid**: 16 tiles per render, each 256 x 256, giving a 1024 x 1024
   image.
 - **No active prefetch margin**: 5x5, 6x6, and 7x7 margin experiments were
@@ -50,8 +58,8 @@ Last updated: 2026-05-30.
 - **What**: Full-quality renders use adaptive subdivision to skip uniform
   regions.
 - **Why**: Large in-set and far-exterior areas do not need per-pixel iteration.
-- **Status**: **Keep**. This is both a simulator optimisation and a useful model
-  for the hardware-side optimisation story.
+- **Status**: **Load-bearing**. This is the simulator's hardware-equivalent
+  render path and should be the main comparison point for FPGA benchmarks.
 
 ### Preview Kernel
 
@@ -59,8 +67,10 @@ Last updated: 2026-05-30.
 - **What**: Computes one pixel per 2 x 2 block and broadcasts the band.
 - **Why**: Performance mode can make active pan/zoom frames cheaper without
   changing the wire format.
-- **Status**: **Load-bearing for Performance mode**. The settled frame is
-  re-requested at full quality.
+- **Status**: **Load-bearing for Performance mode**, but it is an interaction
+  shortcut inside the same simulator, not a separate simulator and not the main
+  full-quality FPGA-equivalent path. The settled frame is re-requested at full
+  quality.
 
 ### Log-Banded Palette Mapping
 

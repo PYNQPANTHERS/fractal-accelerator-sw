@@ -3,8 +3,13 @@
 WebSocket server. This is the PS-side bridge between the browser UI and the
 current renderer backend.
 
-Today the backend is `sim/renderer.py`. The server is deliberately written so
-that the same scheduler and protocol can later call a PYNQ/FPGA driver instead.
+Today there is one backend implementation in use: `sim/renderer.py` driving the
+single C++ simulator binary. Full-quality simulator renders use Mariani-Silver,
+matching the intended FPGA algorithm; preview is only a cheaper interaction
+quality inside that same simulator.
+
+The server is deliberately written so that the same scheduler and protocol can
+later call a PYNQ/FPGA driver instead.
 
 ## Responsibilities
 

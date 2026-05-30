@@ -6,6 +6,12 @@ benchmark tooling be built before the FPGA backend is ready.
 Renders Mandelbrot, Julia, and Burning Ship at 1024 x 1024 in 4 x 4 tiles,
 matching the shape the real pipeline will expose to the PS.
 
+There is one simulator implementation: the C++ binary in `sim/cpp`. The browser
+server uses its `render_image` command. Full-quality `render_image` uses the
+Mariani-Silver adaptive renderer, matching the intended FPGA architecture.
+Preview quality is a faster active-navigation mode inside the same binary, not a
+second simulator.
+
 ## Quick start
 
 ```sh
@@ -66,5 +72,6 @@ because the simulator runs one worker per tile. Exact numbers depend on zoom,
 `max_iter`, CPU, and preview/full quality.
 
 Full-quality renders use the Mariani-Silver path. Preview renders use a
-subsampled 2 x 2 broadcast path, which the frontend uses for active Performance
-mode pan/zoom before requesting a full-quality settled frame.
+subsampled 2 x 2 broadcast path inside the same simulator binary, which the
+frontend uses for active Performance mode pan/zoom before requesting a
+full-quality settled frame.

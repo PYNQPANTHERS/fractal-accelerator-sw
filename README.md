@@ -24,6 +24,14 @@ Two large panels are rendered side by side:
 
 ## Render Contract
 
+- There is **one simulator implementation** in the app path:
+  `sim/cpp/build/fractal_sim`, accessed through `sim/renderer.py`.
+- The server uses the simulator's `render_image` command. Full-quality
+  `render_image` uses the Mariani-Silver adaptive renderer, matching the
+  intended FPGA algorithm described in the RTL repo.
+- Preview mode is not a second simulator. It is a cheaper active-navigation path
+  inside the same simulator binary, used only for Performance-mode pan/zoom
+  before a full-quality settled render is requested.
 - Main image is **1024 x 1024**.
 - Tile geometry is **4 x 4**, 16 tiles total, each **256 x 256**.
 - Pixel format is nibble-packed **4-bit palette indices**.

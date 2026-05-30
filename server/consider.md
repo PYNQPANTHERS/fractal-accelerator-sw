@@ -6,10 +6,13 @@ The fuller record is in `../OPTIMISATIONS.md` and `../PAN_SMOOTHNESS.md`.
 ## What Changed
 
 - 4 x 4 visible rendering is the current path.
+- There is one simulator implementation. Its full-quality `render_image` path
+  uses Mariani-Silver, matching the intended FPGA algorithm.
 - Larger 5x5/6x6/7x7 render margins were tested and rolled back.
 - Predictive prefetch is disabled while there is no rendered margin.
 - Performance mode now relies on cheaper active renders: preview quality plus
-  lower active `max_iter`, then full quality after pan or wheel settle.
+  lower active `max_iter`, then Mariani-Silver full quality after pan or wheel
+  settle. Preview is a mode inside the same simulator, not another simulator.
 - Julia coupling jobs use `mark_active=False` so they do not steal active-panel
   priority from the panel the user is dragging.
 - Minimap rendering is optional because minimaps are real backend jobs.

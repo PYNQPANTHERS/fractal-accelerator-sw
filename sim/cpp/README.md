@@ -1,7 +1,8 @@
 # sim/cpp/
 
-C++ implementation of the software PL simulator. It is a long-running binary
-that speaks a small JSON-over-stdin / framed-binary-over-stdout protocol used by
+C++ implementation of the software PL simulator. This is the single simulator
+implementation used by the app/server path. It is a long-running binary that
+speaks a small JSON-over-stdin / framed-binary-over-stdout protocol used by
 `sim/renderer.py`.
 
 ## Build
@@ -32,8 +33,10 @@ and logs diagnostics to stderr. Press Ctrl-D to close stdin and exit.
 
 ## Render Paths
 
-- Full quality uses the Mariani-Silver adaptive renderer.
-- Preview quality uses a subsampled 2 x 2 broadcast kernel.
+- Full quality uses the Mariani-Silver adaptive renderer, matching the intended
+  FPGA algorithm.
+- Preview quality uses a subsampled 2 x 2 broadcast kernel inside this same
+  binary; it is an interaction shortcut, not a second simulator implementation.
 - Output is nibble-packed 4-bit palette indices, two pixels per byte.
 
 ## FPGA Relevance
