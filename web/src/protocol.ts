@@ -16,6 +16,7 @@
  *   { type: "set_view", panel_id, frame_seq, pan_x, pan_y, zoom,
  *                       fractal_type: "mandelbrot" | "julia",
  *                       julia_c_real?, julia_c_imag?, max_iter?,
+ *                       quality?: "full" | "preview",
  *                       interaction?: "idle" | "active" | "final" }
  *   { type: "set_mode", mode: "performance" | "live_evolution" }
  *   { type: "set_minimaps", enabled, frame_seq }

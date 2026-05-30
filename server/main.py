@@ -139,7 +139,7 @@ async def _render_and_stream(
     scheduler: Scheduler,
     telemetry_enabled: Callable[[], bool],
 ) -> None:
-    """Pick the next job, render all 16 tiles, stream each to the browser.
+    """Pick the next job, render all 16 tiles, stream the result to the browser.
 
     Fix 1 — Event wake-up:
         Awaits scheduler.job_available instead of sleeping, so the render
@@ -147,7 +147,8 @@ async def _render_and_stream(
 
     Fix 2 — render_image (single round trip):
         One command to the C++ sim, 16 tile frames streamed back as each
-        completes — matches the real PL's interrupt-per-tile behaviour.
+        completes for telemetry. The binary payload is bundled into one
+        WebSocket send to reduce browser/socket overhead.
 
     Fix 4 — Backpressure:
         If the browser's send buffer is too full, skip this render and wait

@@ -25,13 +25,14 @@ struct RenderTile {
     int max_iter;
 };
 
-// Render the full image. Tile frames are streamed in order 0..(N-1) —
-// mirrors how the real PL emits tiles as its cores complete them.
+// Render the full image. Tile frames are streamed in completion order,
+// mirroring how the real PL can report tile_id + tile_done as its cores
+// finish.
 //
 // `preview` switches the kernel to a subsampled path: compute one pixel
 // per 2x2 block and broadcast. ~4x faster per tile, slightly fuzzy
-// output. The client uses this during active drag for smoothness and
-// re-requests `preview=false` on drag release for crisp final.
+// output. Performance mode uses this during active pan/zoom for
+// smoothness and re-requests `preview=false` on settle for crisp final.
 struct RenderImage {
     double pan_x;
     double pan_y;

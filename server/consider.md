@@ -1,29 +1,36 @@
-memoization , any clever caching? 
-ie static data by critical processes. 
+# Current Performance Conclusions
 
-----
-ui
---
-can we addexpandable overlay to main page called tune - thatt allows use to set these changable apramters eg margion, quality of panning rendering etc etc ie any key paramters --  any key  - also adding fps overlay button so we can see on both pages -- maybe alsoe xperitemnt with how fats people are allowed to pan this could help -- and lsit optmisations for me so we not what we have done / what may need removing
----
-live evolution panning still seems smoother thanperofrmance whihc is obviosuly wrong for some reaosn .
+These notes capture the decisions from the pan/Performance-mode investigation.
+The fuller record is in `../OPTIMISATIONS.md` and `../PAN_SMOOTHNESS.md`.
 
-----
- 
+## What Changed
 
- temporal delta encoding ?  - only send the pixels that changed 
- -- is this pure , is actually worth ? 
+- 4 x 4 visible rendering is the current path.
+- Larger 5x5/6x6/7x7 render margins were tested and rolled back.
+- Predictive prefetch is disabled while there is no rendered margin.
+- Performance mode now relies on cheaper active renders: preview quality plus
+  lower active `max_iter`, then full quality after pan or wheel settle.
+- Julia coupling jobs use `mark_active=False` so they do not steal active-panel
+  priority from the panel the user is dragging.
+- Minimap rendering is optional because minimaps are real backend jobs.
+- Workload telemetry is optional and only enabled while the floating inspector
+  is open.
 
- ----
- so much smoother moving to 4x4 over 5x5 why is this? 
+## Key Lesson
 
- ---
- performance mode seems to be twice as slow as live evolution latency wise, when I would expectt eh opposite, should be the same thing, just julia renders after we stop panning --- why is that, is it not just a schedueling difference? -- look into the performance implementation 
+Scheduling alone cannot make a Mandelbrot frame cheaper. It can prevent Julia
+or minimaps from blocking the active panel, but the FPS ceiling rises only when
+the active render itself costs less.
 
- ----
- what about : object pooling and gpu instancing
+That maps well to the FPGA design: active navigation can use a lower iteration
+budget, coarser sampling, or tile-priority/cancellation policy; the settled view
+then runs the full-quality path.
 
+## Still Useful To Investigate
 
- -----
-
- Big picture: scheduling alone cannot make one Mandelbrot frame cheaper. It can only stop Julia from blocking Mandelbrot and keep the renderer fed. To push Mandelbrot FPS beyond that, the real options are active-drag lower work, like lower max_iter/preview, or FPGA-side tile/sixteenth priority with cancellation of stale background work.
+- Hardware-side tile priority or cancellation for stale background work.
+- Benchmark traces comparing Performance vs Live Evolution with minimaps on/off.
+- Feeding Workload Inspector events from the real PS driver using PL tile id and
+  tile-done / transfer-complete status.
+- Whether a small FPGA-cheap render margin becomes worthwhile once tile latency
+  is dominated by hardware parallelism rather than CPU simulation.

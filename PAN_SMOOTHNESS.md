@@ -9,6 +9,29 @@ visible "snap" or "wall" or "render flash" during or after the gesture.
 
 ---
 
+## Current state — 2026-05-30
+
+The live implementation is back to **4x4 / 1024 px / no render margin**.
+5x5, 6x6, 7x7, and predictive prefetch are kept below as history, but are not
+the active path.
+
+Current pan/zoom smoothness comes from:
+
+- direct CSS transform preview during drag
+- transform writes outside React's render loop
+- wall-clock pan velocity cap
+- one in-flight render with last-write-wins pending view
+- frame-applied residual transforms routed through the same clamp path
+- Performance-mode active preview renders plus full-quality settled renders
+- double-buffered canvas swaps only after all 16 tiles arrive
+
+The practical lesson from the experiments: scheduling helps avoid wasted work,
+but the FPS ceiling only rises when active frames are cheaper. For the FPGA
+path, that maps cleanly to a lower iteration/coarser active kernel and a full
+settled render.
+
+---
+
 ## v0 — direct 1:1 drag, no preview transform
 
 **Reported**: canvas only updates when mouse is released; mid-drag is dead.
@@ -147,7 +170,7 @@ stops the world; no overshoot.
 
 ---
 
-## v8 — "still snappy on quick flicks" — current
+## v8 — "still snappy on quick flicks" — freeze-while-in-flight attempt
 
 **Reported**: even with the velocity cap, fast flicks still show a
 visible discontinuity at each render arrival.
@@ -329,14 +352,14 @@ while settled views use the full render path. That is likely a better
 Performance-mode lever than trying to schedule whole-frame Julia work
 around whole-frame Mandelbrot work in the simulator.
 
-## What to try next if v12 still feels off
+## Current next checks if jitter returns
 
-- Drop `permessage-deflate` on the WebSocket — fractal payload is
-  entropy-dense, compression buys nothing but costs ~3-5 ms per tile.
-- Concatenate all 16 tile binary frames into one `ws.send` per render
-  (saves ~16 socket-write overheads).
-- During drag in Performance mode, drop `max_iter` to 32 (vs 64) at
-  zoom 0–3 — render takes ~5ms instead of ~12ms. Bump back up on
-  drag release.
-- Add a debug overlay showing live `cursor_x - canvas_x` mismatch in
-  pixels. Spikes at render-apply tell us if v8 is or isn't fixing it.
+- Use the FPS overlay plus Workload Inspector together: if tile latency is flat
+  but request-to-display latency spikes, the issue is frontend/paint/backpressure
+  rather than backend compute.
+- Compare minimaps on vs off. Minimap jobs are real backend work, so disabling
+  them is the cleanest way to test main-panel-only throughput.
+- Keep Performance mode focused on cheaper active frames. Long Julia defers and
+  large render margins both tested worse than the current preview/final split.
+- If a render margin returns for FPGA testing, re-enable predictive prefetch only
+  with enough real margin pixels to hide the prediction error.

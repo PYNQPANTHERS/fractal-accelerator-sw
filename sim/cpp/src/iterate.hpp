@@ -14,12 +14,9 @@ namespace fractal_sim {
 
 // Geometry follows the FPGA's "sixteenth" architecture: each tile is a
 // 256x256 sixteenth, processed independently by the PL cluster. The
-// rendered image is oversized — we render a 6x6 grid (1536 px) so the
-// centre 4x4 (1024 px) is visible to the user and the surrounding ring
-// of sixteenths is a pre-rendered margin that the canvas can pan into
-// without waiting for a new render. The PL doesn't care that we ask for
-// 36 sixteenths instead of 16; Mariani-Silver on the FPGA makes the
-// margin tiles nearly free (large in-set / far-exterior regions skip).
+// current software path renders exactly the visible 4x4 grid (1024 px)
+// with no pre-rendered margin; larger margin experiments were tried and
+// rolled back because the extra work increased frontend jitter.
 constexpr int  TILE_PIXELS    = 256;                       // tile side (one sixteenth)
 constexpr int  VISIBLE_PIXELS = 1024;                      // centre region the user sees
 constexpr int  IMAGE_PIXELS   = 1024;                      // 4x4 grid, no margin

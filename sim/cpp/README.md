@@ -1,10 +1,12 @@
 # sim/cpp/
 
-C++ implementation of the simulator. Long-running binary that speaks the stdio protocol described in [../README.md](../README.md).
+C++ implementation of the software PL simulator. It is a long-running binary
+that speaks a small JSON-over-stdin / framed-binary-over-stdout protocol used by
+`sim/renderer.py`.
 
 ## Build
 
-```
+```sh
 cd sim/cpp
 cmake -B build
 cmake --build build
@@ -14,12 +16,35 @@ Produces `build/fractal_sim`.
 
 ## Run
 
-```
+```sh
 ./build/fractal_sim
 ```
 
-Reads stdin, writes binary tile responses to stdout, logs to stderr. Press Ctrl-D to close stdin and exit.
+Reads JSON commands from stdin, writes framed binary tile responses to stdout,
+and logs diagnostics to stderr. Press Ctrl-D to close stdin and exit.
 
-## Status
+## Commands
 
-Scaffolding. Reads stdin and logs received bytes to stderr. No protocol parsing, no rendering yet.
+- `ping`: returns a pong frame.
+- `render_tile`: renders one 256 x 256 tile.
+- `render_image`: renders the current 4 x 4 image, 16 tiles total, and streams
+  tile frames as worker threads complete.
+
+## Render Paths
+
+- Full quality uses the Mariani-Silver adaptive renderer.
+- Preview quality uses a subsampled 2 x 2 broadcast kernel.
+- Output is nibble-packed 4-bit palette indices, two pixels per byte.
+
+## FPGA Relevance
+
+The simulator intentionally behaves like the future PS/PL boundary:
+
+- one render config enters the backend
+- independent tile workers complete in their own order
+- the PS-side layer observes tile id plus completion time
+- the frontend receives the same tile payload shape regardless of backend
+
+When the FPGA driver replaces this process, the completion source changes from
+stdout frames to PL tile-done / transfer-complete status, but the server and
+frontend contract should remain the same.

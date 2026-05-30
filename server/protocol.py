@@ -202,8 +202,8 @@ def pack_tile_bundle(panel_id:  int,
                     used to be tile_id is now tile_count).
       bytes 16..  : N tile records, each = (u8 tile_id) + (w*h/2 payload).
 
-    Sending one ~800 KB frame instead of 25 × ~32.8 KB frames removes
-    25 × ws.send overhead per render.
+    Sending one bundled frame instead of N separate tile frames removes
+    N x ws.send overhead per render. Current geometry is 16 x 32 KB tiles.
     """
     tile_count = len(tiles)
     if tile_count > 255:

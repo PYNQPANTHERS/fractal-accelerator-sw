@@ -26,9 +26,8 @@ from sim.config import RenderConfig
 
 TILE_PIXELS = 256
 TILE_BYTES  = TILE_PIXELS * TILE_PIXELS // 2   # 32768
-# 5×5 grid of 256-px tiles: 1280-px rendered image, centre 1024 is the
-# browser-visible region, surrounding ring (128 px each side) is
-# pre-rendered pan margin.
+# 4x4 grid of 256-px tiles: 1024-px rendered image, no pre-rendered
+# pan margin in the current fast path.
 TILES_PER_IMAGE = 16
 
 # Frame format from sim/cpp/src/response.hpp:

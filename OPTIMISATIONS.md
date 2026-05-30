@@ -1,191 +1,280 @@
 # Optimisations log
 
-What's currently in the codebase that exists for performance / UX
-smoothness reasons, organised by layer. Each entry: where it lives,
-what it does, why we added it, and whether it's still earning its
-keep.
+Current performance and UX decisions in the software stack. This is written as
+a practical rollback map: what exists, why it exists, and whether it should be
+kept when the backend changes from the simulator to the FPGA driver.
 
-This is intentionally a flat list rather than a narrative — when
-performance work compounds, knowing what's optional and what's load-
-bearing is the only way to back things out safely.
+Last updated: 2026-05-30.
 
----
+## Current Render Shape
 
-## C++ sim (`sim/cpp/src/`)
+- **4 x 4 tile grid**: 16 tiles per render, each 256 x 256, giving a 1024 x 1024
+  image.
+- **No active prefetch margin**: 5x5, 6x6, and 7x7 margin experiments were
+  tried and rolled back because extra tile work lowered the frame ceiling and
+  increased visible jitter.
+- **No active predictive prefetch**: the hook is still guarded in code, but it
+  is disabled while `CANVAS_MARGIN_FRAC` is zero. With no rendered margin,
+  prediction can expose unrendered edges instead of hiding them.
+- **Nibble-packed output**: each pixel is a 4-bit palette index, two pixels per
+  byte. A tile payload is 32 KB.
+- **FPGA-friendly config**: `RenderConfig` mirrors the intended PL register
+  shape: pan, zoom, fractal type, Julia c, max iteration budget, and preview
+  flag.
 
-### Parallel tile rendering
-- **Where**: `main.cpp` — `std::thread` per tile in `RenderImage`
-- **What**: Each tile compute runs on its own thread; main thread joins all then writes frames in order.
-- **Why**: 25 tiles × 12 ms serial would be 300 ms per render. Parallel = single tile time (~12 ms at zoom 0).
-- **Status**: **Load-bearing**. Removing this would push wall time per render past 200 ms even at zoom 0.
+## C++ Simulator
 
-### Log-banded escape-time remap
-- **Where**: `iterate.cpp` — `band_for()`
-- **What**: Remaps iteration count to 4-bit palette band via log1p curve.
-- **Why**: With fixed-iter buckets, deep zooms collapse to one band. log-scaling preserves visible boundary structure at any max_iter.
-- **Status**: **Load-bearing**. Without it, deep zoom looks flat.
+### Parallel Tile Rendering
 
-### Adaptive `max_iter` per zoom
-- **Where**: `web/src/App.tsx` — `maxIterFor(zoom)`
-- **What**: `max_iter = min(1500, 64 + zoom × 96)`. Low zoom: 64 iters (~5 ms). Deep zoom: 1500 iters (~150 ms).
-- **Why**: Boundary thinness grows with zoom; need more iters to resolve it.
-- **Status**: **Load-bearing**. Without scaling, deep zooms either look blank (too few) or are unusably slow (too many).
+- **Where**: `sim/cpp/src/main.cpp`
+- **What**: `render_image` launches one worker per tile and streams tile frames
+  back to Python as workers complete.
+- **Why**: It mimics the hardware model: independent tile/sixteenth workers
+  complete in their own order, then the PS side serialises results.
+- **Status**: **Load-bearing**. It gives realistic tile-completion telemetry and
+  keeps the simulator useful for frontend and scheduler work.
 
-### Preview kernel (subsampled)
-- **Where**: `iterate.cpp` — `compute_tile(..., preview)`
-- **What**: Optional flag computes 1-in-4 pixels (one per 2×2 block) and broadcasts.
-- **Why**: ~3× faster per tile for during-drag renders.
-- **Status**: **Currently unused** — wired in but client always sends `quality: "full"` since v12. Keep the kernel; the wiring may revive if we want it for FPGA's preview-mode-equivalent.
+### Completion-Order Streaming
 
-### Render-margin geometry (5×5 tile grid)
-- **Where**: `iterate.hpp` — `IMAGE_PIXELS = 1280`, `VISIBLE_PIXELS = 1024`
-- **What**: Sim renders 1280×1280 (25 tiles); browser displays centre 1024×1024.
-- **Why**: 128 px of pre-rendered margin on each side absorbs short pans without round-tripping.
-- **Status**: **Load-bearing**. The basis for the prefetch behaviour to work. Bumping to 7×7 made each render too slow (see PAN_SMOOTHNESS.md v10/v11).
+- **Where**: `sim/cpp/src/main.cpp`, `sim/renderer.py`
+- **What**: Python yields `(tile_id, payload, elapsed_ms)` as each simulator
+  tile frame is received.
+- **Why**: The Workload Inspector can show real "tile completed at 3.2 ms"
+  style timings now, and the same interface maps cleanly to future PL
+  `tile_done` / transfer-complete events.
+- **Status**: **Load-bearing for FPGA readiness**.
 
----
+### Mariani-Silver Full-Quality Path
 
-## Python server (`server/`)
+- **Where**: `sim/cpp/src/mariani_silver.hpp`, `sim/cpp/src/main.cpp`
+- **What**: Full-quality renders use adaptive subdivision to skip uniform
+  regions.
+- **Why**: Large in-set and far-exterior areas do not need per-pixel iteration.
+- **Status**: **Keep**. This is both a simulator optimisation and a useful model
+  for the hardware-side optimisation story.
 
-### Single-slot per-panel scheduler
-- **Where**: `scheduler.py`
-- **What**: One pending job per panel — new pushes overwrite stale ones (last-write-wins).
-- **Why**: User flicks generate many pointermoves; we should render the latest, not a queue of stale ones.
+### Preview Kernel
+
+- **Where**: `sim/cpp/src/iterate.cpp`
+- **What**: Computes one pixel per 2 x 2 block and broadcasts the band.
+- **Why**: Performance mode can make active pan/zoom frames cheaper without
+  changing the wire format.
+- **Status**: **Load-bearing for Performance mode**. The settled frame is
+  re-requested at full quality.
+
+### Log-Banded Palette Mapping
+
+- **Where**: `sim/cpp/src/iterate.cpp`
+- **What**: Escape counts are remapped to 16 bands with a log curve.
+- **Why**: Fixed linear buckets flatten deep zooms into a tiny number of visible
+  bands.
+- **Status**: **Keep**.
+
+## Python Server / PS Scheduler
+
+### Single-Slot Per-Panel Scheduler
+
+- **Where**: `server/scheduler.py`
+- **What**: Each panel has one pending job. New pushes overwrite stale pending
+  work.
+- **Why**: Pointermove can produce more views than the backend can render; the
+  latest view is the only one worth keeping.
+- **Status**: **Load-bearing** and directly FPGA-friendly.
+
+### Explicit Interaction State
+
+- **Where**: `web/src/useViewState.ts`, `server/protocol.py`,
+  `server/scheduler.py`
+- **What**: Requests carry `interaction: "active" | "final" | "idle"`.
+- **Why**: The PS side does not infer interaction state from silence; it knows
+  when the user is actively navigating and when a settled full-quality render is
+  required.
 - **Status**: **Load-bearing**.
 
-### Performance mode defer
-- **Where**: `scheduler.py` — `DEFER_MS = 250`
-- **What**: In Performance mode, the non-active panel waits 250 ms of idle before rendering.
-- **Why**: Lets Mandelbrot keep the sim's full throughput during interaction; Julia catches up on pause.
-- **Status**: **Load-bearing for Performance mode UX.**
+### Performance vs Live Evolution
 
-### `mark_active=False` for system-derived pushes
-- **Where**: `scheduler.py` — `push(..., mark_active=False)` for Julia coupling
-- **What**: Julia auto-pushes triggered by Mandelbrot pans don't claim active-panel status.
-- **Why**: Without this, the active panel kept flipping to Julia on every Mandelbrot frame, causing Mandelbrot to be deferred forever during drag.
-- **Status**: **Load-bearing** — see PAN_SMOOTHNESS.md v3.
+- **Where**: `server/scheduler.py`
+- **What**: Performance mode picks the active main panel first, then the other
+  main panel, then minimaps. Live Evolution alternates the two main panels.
+- **Why**: Performance mode should give Mandelbrot or Julia navigation first
+  refusal; Live Evolution is for seeing both panels update together.
+- **Status**: **Keep**. Scheduling alone does not make frames cheaper, so the
+  main FPS gain comes from active-preview work, not from starving Julia.
 
-### Skip Julia coupling on pure zoom
-- **Where**: `main.py` — `recv_loop` checks `pan_changed`
-- **What**: Mandelbrot zoom-only commits don't re-render Julia.
-- **Why**: Cursor-anchored zoom previously kept Julia's c fixed but the server still re-rendered it identically. Pure waste.
+### Julia Coupling Without Stealing Activity
+
+- **Where**: `server/main.py`, `server/scheduler.py`
+- **What**: Mandelbrot pan changes queue a Julia render with `mark_active=False`.
+- **Why**: The system-derived Julia job must not steal active-panel status from
+  the panel the user is actually dragging.
 - **Status**: **Load-bearing**.
 
-### Event-driven render loop (no idle sleep)
-- **Where**: `main.py` — `await scheduler.job_available.wait()` instead of polling
-- **What**: Render loop wakes on the first push, not on a fixed timer.
-- **Why**: Zero idle latency.
+### Skip Waste on Pure Zoom
+
+- **Where**: `server/main.py`
+- **What**: Pure Mandelbrot zoom does not re-render Julia just because the
+  Mandelbrot viewport changed; Julia only needs a new `c`.
+- **Why**: Avoids duplicate Julia work during centre-anchored zoom.
 - **Status**: **Load-bearing**.
 
-### Deferred-pending sleep fallback
-- **Where**: `main.py` — `await asyncio.sleep(0.05)` when has_pending but next_job returned None
-- **What**: If the scheduler picks nothing but has pending jobs (because of defer logic), retry in 50 ms.
-- **Why**: Otherwise the event would only fire on a *new* push and deferred jobs would never run.
+### Optional Real Minimap Jobs
+
+- **Where**: `server/main.py`, `web/src/DebugPanel.tsx`
+- **What**: Minimaps are genuine low-priority render jobs and can be toggled
+  off.
+- **Why**: A minimap is a different camera, so reusing main-panel pixels would
+  be wrong except at matching zoom/pan. The toggle gives a clean benchmark path
+  with no minimap load.
+- **Status**: **Keep**.
+
+### Telemetry Only When Needed
+
+- **Where**: `server/main.py`, `web/src/WorkloadInspector.tsx`
+- **What**: `set_telemetry` turns scheduler/tile/render JSON events on only
+  while the floating Workload Inspector is open.
+- **Why**: The normal render path should not pay debug overhead.
+- **Status**: **Keep**.
+
+### Bundled Binary Tile Sends
+
+- **Where**: `server/protocol.py`, `server/main.py`,
+  `web/src/protocol.ts`
+- **What**: The server collects the 16 tile payloads for one render and sends
+  one binary WebSocket bundle.
+- **Why**: Reduces per-`ws.send` overhead while preserving per-tile timing via
+  optional telemetry.
+- **Status**: **Load-bearing for browser throughput**.
+
+### WebSocket Send Backpressure
+
+- **Where**: `server/main.py`
+- **What**: If the browser send buffer is already too large, the current render
+  is dropped and a telemetry event explains why.
+- **Why**: Better to drop stale output than queue hundreds of KB behind the
+  user's current view.
+- **Status**: **Keep**.
+
+## Browser Frontend
+
+### CSS Transform Pan Preview
+
+- **Where**: `web/src/useViewState.ts`
+- **What**: During drag the canvas is moved with `transform: translate(...)`
+  immediately, without waiting for new tiles.
+- **Why**: Pointer feedback stays responsive even when render latency is above a
+  display frame.
 - **Status**: **Load-bearing**.
 
----
+### Direct DOM Writes in the Hot Path
 
-## Browser (`web/src/`)
-
-### Double-buffered painter
-- **Where**: `tilePainter.ts` — staging canvas + atomic blit
-- **What**: Tiles paint into an off-screen 1280×1280 canvas. Only when all 25 land does `drawImage(staging → display)` happen.
-- **Why**: Without this, the user sees a half-rendered patchwork between tile arrivals (16 ms gaps × 25 tiles = visible mid-render artifact).
+- **Where**: `web/src/useViewState.ts`
+- **What**: Transform updates write directly to the canvas element instead of
+  going through React state.
+- **Why**: Keeps high-rate pointer movement from causing React reconciliation
+  jitter.
 - **Status**: **Load-bearing**.
 
-### CSS-translate preview during drag
-- **Where**: `useViewState.ts` — `writeTransform()`
-- **What**: During an active drag, the canvas is `transform: translate(...)`ed instantly, before any render request. Cleared when fresh tiles land.
-- **Why**: Provides 60 Hz visual feedback decoupled from the ~25-30 Hz render rate.
+### Client Backpressure and Last-Write-Wins Pending View
+
+- **Where**: `web/src/useViewState.ts`
+- **What**: At most one render is in flight for an interaction. If the user
+  moves again, the pending view is overwritten with the newest one.
+- **Why**: Avoids latency buildup and matches the PS scheduler's coalescing
+  behaviour.
 - **Status**: **Load-bearing**.
 
-### Direct DOM transform writes (not React state)
-- **Where**: `useViewState.ts` — `writeTransform()` writes to `el.style.transform` directly
-- **What**: Transform updates skip React re-renders.
-- **Why**: At 120 Hz pointermove, a setState per move was causing 8-15 ms of reconciliation per frame.
+### Active Preview + Final Full Render
+
+- **Where**: `web/src/App.tsx`, `web/src/useViewState.ts`
+- **What**: In Performance mode, active pan/zoom sends `quality: "preview"` and
+  a reduced `max_iter`; release or wheel-settle sends `quality: "full"`.
+- **Why**: This is the real Performance-mode FPS lever: make active frames
+  cheaper, then clean them up when the view settles.
 - **Status**: **Load-bearing**.
 
-### Stream-commits during drag (per-mode interval)
-- **Where**: `useViewState.ts` — `onCommit` mid-drag
-- **What**: Every pointermove that finds the in-flight slot empty fires a new `set_view`.
-- **Why**: Server receives updates throughout the drag, not just at release. Backpressure caps the rate at one-render-in-flight.
+### Wheel Zoom Debounce
+
+- **Where**: `web/src/useViewState.ts`
+- **What**: Wheel steps render active preview frames immediately, then a full
+  render after 140 ms without wheel input.
+- **Why**: Zoom gets the same latency/quality split as pan.
+- **Status**: **Keep**.
+
+### Frame Sequence Dropping
+
+- **Where**: `web/src/useRenderSocket.ts`
+- **What**: Older `frame_seq` bundles are dropped per panel, with wrap-aware
+  u16 comparison.
+- **Why**: Prevents late stale renders from painting over the current view.
 - **Status**: **Load-bearing**.
 
-### Client-side backpressure
-- **Where**: `useViewState.ts` — `inFlight.current` ref + `pending.current` stash
-- **What**: Client never sends a new render request while one is in flight. New views during in-flight overwrite the stash.
-- **Why**: Without this, server queues grew without bound during fast drags, latency cascaded.
-- **Status**: **Load-bearing** — see PAN_SMOOTHNESS.md v5.
+### Worker-Based Tile Decode
 
-### Wrap-aware u16 seq drop
-- **Where**: `useRenderSocket.ts` — `isOlder()`
-- **What**: Tile frames with seq strictly older than the latest seen are dropped (per panel).
-- **Why**: Edge case for very fast pans where the server starts streaming a render after the client moved on. Wrap-aware because frame_seq is u16.
-- **Status**: **Load-bearing** for correctness, even if it doesn't fire often.
-
-### `sentX/sentY` → `baselineX/baselineY` rebase
-- **Where**: `useViewState.ts` — `notifyFrameApplied()`
-- **What**: When a streamed render lands, the transform baseline rebases to the cursor position at the moment of *send*, not now. Transform residual = cursor-now − cursor-at-send (small).
-- **Why**: Without this, the canvas snapped by `cursor-now − last-baseline` pixels on every render arrival. Visible jump on flicks.
-- **Status**: **Load-bearing** — see PAN_SMOOTHNESS.md v6.
-
-### Time-based velocity cap (not event-based)
-- **Where**: `useViewState.ts` — `MAX_PAN_PX_PER_MS = 1.5`, `advanceWorld()`
-- **What**: World pans at most 1.5 px per ms (≈90 px per 60 Hz frame).
-- **Why**: High pointer rates (120/240 Hz) blew past a per-event cap. Wall-clock cap is invariant to pointer rate.
-- **Status**: **Load-bearing for fast-flick smoothness.**
-
-### Predictive prefetch
-- **Where**: `useViewState.ts` — speculative onCommit in `notifyFrameApplied`
-- **What**: When a render lands mid-drag with velocity > threshold, fire a speculative request at `worldPos + velocity × 150 ms`.
-- **Why**: Render latency is ~150 ms. Pre-fetch means the canvas always has fresh tiles where the cursor is heading, not where it just was.
-- **Status**: **Experimental, kept as of v12.** Removable if it causes visible jitter on direction changes.
-
-### Memoised ref callbacks
-- **Where**: `App.tsx` — `useMemo(() => mergeRefs(...), [...])`
-- **What**: Canvas ref-callback identity stays stable across renders.
-- **Why**: Inline arrows recreated every render → React unmounted/remounted canvases → painter rebuilt → `clear()` ran → black flash.
+- **Where**: `web/src/tileWorker.ts`, `web/src/useTileWorker.ts`
+- **What**: Nibble unpacking, RGBA expansion, and `ImageBitmap` creation happen
+  in a Web Worker.
+- **Why**: The main thread only blits ready bitmaps, which protects pan and
+  zoom smoothness.
 - **Status**: **Load-bearing**.
 
-### Painter "same canvas" guard
-- **Where**: `App.tsx` — `makeRegister()` skips clear if same canvas already registered
-- **What**: Repeated ref calls with the same DOM node don't recreate the painter.
-- **Why**: Belt-and-braces against the same flash bug above.
+### Double-Buffered Painter
+
+- **Where**: `web/src/tilePainter.ts`
+- **What**: Tiles draw into an off-screen staging canvas. The visible canvas is
+  swapped only when all 16 tiles for the frame are ready.
+- **Why**: Avoids half-old / half-new patchwork during tile arrival.
 - **Status**: **Load-bearing**.
 
-### Suppress WS handlers on cleanup
-- **Where**: `useRenderSocket.ts` — sets `ws.onopen/.onclose/...` to null on unmount
-- **What**: React 19 StrictMode double-mount fires a cleanup → re-mount cycle that would normally log a "WebSocket closed before connection established" warning.
-- **Why**: Cosmetic, but reduces console noise during dev.
-- **Status**: **Cosmetic. Keep.**
+### Stable Canvas Registration
 
-### Reconnect backoff
-- **Where**: `useRenderSocket.ts` — exponential 250 ms → 4 s cap
-- **What**: After WS close, retry with growing delay.
-- **Why**: Server restart shouldn't require page refresh.
-- **Status**: **Load-bearing** for usability.
+- **Where**: `web/src/App.tsx`
+- **What**: Canvas ref callbacks are memoised and the painter ignores repeated
+  registration of the same DOM node.
+- **Why**: Prevents React re-renders from remounting canvases and causing black
+  flashes.
+- **Status**: **Load-bearing**.
 
-### Set-based 25-tile completion tracking
-- **Where**: `tilePainter.ts` — `tilesGot: Set<number>`
-- **What**: Tracks tile arrivals via `Set.add()`, swap when size === 25.
-- **Why**: Bitmask broke at >32 tiles when we tried 6×6 / 7×7; Set works for any count and is fast enough.
-- **Status**: **Load-bearing for current geometry; portable to any tile count.**
+### Floating Workload Inspector
 
----
+- **Where**: `web/src/WorkloadInspector.tsx`
+- **What**: A draggable floating panel shows only the two main panels, with a
+  compact collapsed summary and a 4 x 4 tile grid per lane.
+- **Why**: Lets us inspect scheduling and tile completion while still panning
+  and zooming the main UI.
+- **Status**: **Keep**. This is a differentiating frontend feature and maps
+  directly to future `tile_id` + `tile_done` PL status.
 
-## Things we tried and rolled back
+## Tried and Rolled Back
 
-- **6×6 / 7×7 grids** (v10, v11b): more margin but per-render cost grew past usable.
-- **Preview-quality during drag** (v11): rendered ~3× faster but visually noticeable in motion; user preferred crisp uniform output.
-- **Per-event velocity cap** (v7/v8): high pointer rates bypassed it; replaced with time-based cap.
-- **Freeze world during in-flight render** (v8): killed pan velocity on slow drags. Replaced with the time-based cap that lets the world advance continuously.
+- **5x5 / 6x6 / 7x7 render margins**: more pixels to pan into, but much more
+  backend work. In practice this lowered FPS and increased jitter.
+- **Predictive prefetch**: promising with a rendered margin, but with the
+  current 4x4 no-margin shape it can expose unrendered edges and make swaps
+  feel jumpy.
+- **Long Performance-mode defer**: delaying Julia by a fixed idle window made
+  Performance feel worse. The better policy is active-panel priority plus
+  cheaper active renders.
+- **Full-quality only during active navigation**: clean image, but lower FPS
+  ceiling. Current Performance mode uses preview for active interaction and full
+  quality for the settled frame.
+- **Treating minimaps as reused main data**: rejected because minimaps are
+  different cameras. They are real jobs, but optional.
 
----
+## Benchmark Plan
 
-## What we still haven't tried
+The simulator is useful because it gives a CPU baseline before the FPGA path is
+ready. Benchmarks should replay the same pan/zoom traces through both backends
+and record:
 
-- **WebSocket compression off**: `permessage-deflate` costs ~3-5 ms per tile, payload is entropy-dense (negligible compression). Worth disabling.
-- **Concatenated tile sends**: one binary frame of 25 × 32 KB instead of 25 separate sends. Saves socket-write overhead.
-- **Lower max_iter during drag**: e.g. drop to 32 during active interaction, restore on release. Sim renders faster, slight quality drop.
-- **Mariani-Silver in C++ sim**: would skip large in-set regions wholesale. Faster than current pixel-by-pixel iteration at low zoom.
+- main-panel FPS and p95 request-to-display latency
+- active preview latency vs final full-quality latency
+- dropped stale frames and browser-backpressure drops
+- tile completion order and per-tile elapsed time
+- minimaps on vs off
+- Performance mode vs Live Evolution
+- simulator backend vs FPGA backend once PL is connected
 
+For the FPGA backend, the Workload Inspector telemetry should be fed from the
+PS driver after it observes `tile_id` plus a `tile_done` or transfer-complete
+status bit. The frontend does not need a redesign for that; only the backend
+telemetry source changes.

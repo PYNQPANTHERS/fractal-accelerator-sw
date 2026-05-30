@@ -47,7 +47,8 @@ const MAX_PAN_PX_PER_MS = 1.5
 /** Predictive prefetch: when a render lands mid-drag with the world
  *  still moving above this speed, speculatively request the *next*
  *  render at (worldPos + velocity × LOOKAHEAD). Tiles arrive roughly
- *  when the cursor gets there, so the swap is timely instead of late. */
+ *  when the cursor gets there, so the swap is timely instead of late.
+ *  Disabled in the current 4x4 path because CANVAS_MARGIN_FRAC is 0. */
 const PREFETCH_MIN_SPEED_PX_PER_MS = 0.2
 const PREFETCH_LOOKAHEAD_MS = 150
 
@@ -256,11 +257,9 @@ export function useViewState(
       return
     }
 
-    // Nothing stashed — if we're mid-drag with measurable velocity,
-    // speculatively request the *next* viewport now. By the time the
-    // tiles land, the cursor is likely there and we swap atomically
-    // instead of waiting for a fresh render after the user crosses
-    // into uncharted territory.
+    // Nothing stashed — if we're mid-drag with measurable velocity and
+    // a rendered margin exists, predictive prefetch can request the next
+    // viewport. With the current no-margin 4x4 path this branch exits.
     if (!sess || CANVAS_MARGIN_FRAC <= 0) return
     const speed = Math.hypot(sess.vx, sess.vy)
     if (speed < PREFETCH_MIN_SPEED_PX_PER_MS) return
