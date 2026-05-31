@@ -358,7 +358,7 @@ around whole-frame Mandelbrot work in the simulator.
   but request-to-display latency spikes, the issue is frontend/paint/backpressure
   rather than backend compute.
 - Compare minimaps on vs off. The Mandelbrot minimap is real backend work, while
-  the Julia minimap is a frontend thumbnail of the main Julia canvas.
+  the Julia minimap is a frontend cache of the latest zoomed-out Julia frame.
 - Keep Performance mode focused on cheaper active frames. Long Julia defers and
   large render margins both tested worse than the current preview/final split.
 - If a render margin returns for FPGA testing, re-enable predictive prefetch only

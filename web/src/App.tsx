@@ -53,6 +53,11 @@ export default function App() {
   const seqRef = useRef(0)
   // Julia tracks the c implied by the Mandelbrot centre.
   const juliaCRef = useRef(JULIA_C_INITIAL)
+  const juliaFrameViewsRef = useRef<Map<number, ViewState>>(new Map())
+  const lastSentJuliaViewRef = useRef<ViewState>(JULIA_INITIAL)
+  const juliaOverviewCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [juliaMinimapView, setJuliaMinimapView] =
+    useState<ViewState>(JULIA_INITIAL)
 
   // Stable lookup the worker dispatcher uses to route bitmaps to the
   // right painter once the worker has finished decoding them.
@@ -83,6 +88,26 @@ export default function App() {
     return seqRef.current
   }, [])
 
+  const rememberJuliaFrameView = useCallback((seq: number, view: ViewState) => {
+    const views = juliaFrameViewsRef.current
+    views.set(seq, view)
+    if (views.size > 128) {
+      const oldest = views.keys().next().value
+      if (oldest !== undefined) views.delete(oldest)
+    }
+  }, [])
+
+  const getJuliaOverviewCanvas = useCallback(() => {
+    let canvas = juliaOverviewCanvasRef.current
+    if (!canvas) {
+      canvas = document.createElement('canvas')
+      canvas.width = IMAGE_PX
+      canvas.height = IMAGE_PX
+      juliaOverviewCanvasRef.current = canvas
+    }
+    return canvas
+  }, [])
+
   const commitMandelbrot = useCallback(
     (next: ViewState, interaction: InteractionPhase = 'idle') => {
       const panChanged =
@@ -95,6 +120,7 @@ export default function App() {
       fps.noteRender(seq, Panel.MandelbrotMain)
       if (panChanged) {
         fps.noteRender(seq, Panel.JuliaMain)
+        rememberJuliaFrameView(seq, lastSentJuliaViewRef.current)
       }
       sendRef.current({
         type: 'set_view',
@@ -109,12 +135,14 @@ export default function App() {
         interaction,
       })
     },
-    [nextSeq, fps],
+    [nextSeq, fps, rememberJuliaFrameView],
   )
 
   const commitJulia = useCallback(
     (next: ViewState, interaction: InteractionPhase = 'idle') => {
       const seq = nextSeq()
+      lastSentJuliaViewRef.current = next
+      rememberJuliaFrameView(seq, next)
       fps.noteRender(seq, Panel.JuliaMain)
       sendRef.current({
         type: 'set_view',
@@ -131,7 +159,7 @@ export default function App() {
         interaction,
       })
     },
-    [nextSeq, fps],
+    [nextSeq, fps, rememberJuliaFrameView],
   )
 
   // Both modes stream mid-drag; backpressure inside useViewState gates
@@ -192,19 +220,51 @@ export default function App() {
     [fps, mandelbrotView.notifyFrameApplied],
   )
   const syncJuliaMinimap = useCallback(() => {
-    const main = paintersRef.current[Panel.JuliaMain]
+    const overview = juliaOverviewCanvasRef.current
     const mini = paintersRef.current[Panel.JuliaMini]
-    if (main && mini) {
-      mini.copyFrom(main.canvas)
+    if (overview && mini) {
+      mini.copyFrom(overview)
     }
+  }, [])
+  const captureJuliaOverview = useCallback(
+    (view: ViewState) => {
+      const main = paintersRef.current[Panel.JuliaMain]
+      if (!main) return
+      const overview = getJuliaOverviewCanvas()
+      const ctx = overview.getContext('2d', { alpha: false })
+      if (!ctx) return
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(main.canvas, 0, 0, IMAGE_PX, IMAGE_PX)
+      setJuliaMinimapView(view)
+      const mini = paintersRef.current[Panel.JuliaMini]
+      if (mini) {
+        mini.copyFrom(overview)
+      }
+    },
+    [getJuliaOverviewCanvas],
+  )
+  const consumeJuliaFrameView = useCallback((seq: number) => {
+    const views = juliaFrameViewsRef.current
+    const view = views.get(seq)
+    views.delete(seq)
+    return view
   }, [])
   const onJuliaFrame = useCallback(
     (seq: number) => {
       fps.notePaint(seq, Panel.JuliaMain)
       juliaView.notifyFrameApplied()
-      syncJuliaMinimap()
+      const renderedView =
+        consumeJuliaFrameView(seq) ?? lastSentJuliaViewRef.current
+      if (renderedView && isZoomedOutView(renderedView)) {
+        captureJuliaOverview(renderedView)
+      }
     },
-    [fps, juliaView.notifyFrameApplied, syncJuliaMinimap],
+    [
+      fps,
+      juliaView.notifyFrameApplied,
+      consumeJuliaFrameView,
+      captureJuliaOverview,
+    ],
   )
 
   // Stable ref callbacks — without `useMemo`, every App re-render (e.g. mode
@@ -279,7 +339,7 @@ export default function App() {
           showCrosshair
           canvasRef={registerMandelbrotMain}
           minimapCanvasRef={registerMandelbrotMini}
-          minimapCenterX={MANDELBROT_INITIAL.panX}
+          minimapView={MANDELBROT_INITIAL}
           showMinimap={debugFlags.minimaps}
           formatCoord={formatMandelbrotCoord}
         />
@@ -289,8 +349,7 @@ export default function App() {
           bind={juliaView.bind}
           canvasRef={registerJuliaMain}
           minimapCanvasRef={registerJuliaMini}
-          minimapCenterX={JULIA_INITIAL.panX}
-          showMinimapViewRect={false}
+          minimapView={juliaMinimapView}
           showMinimap={debugFlags.minimaps}
           formatCoord={(v) =>
             `c = ${formatNumber(juliaCRef.current.real)} + ${formatNumber(juliaCRef.current.imag)}i  ·  ×${zoomLabel(v.zoom)}`
@@ -367,7 +426,7 @@ function Viewport({
   showCrosshair = false,
   canvasRef,
   minimapCanvasRef,
-  minimapCenterX,
+  minimapView,
   showMinimapViewRect = true,
   showMinimap,
   formatCoord,
@@ -378,7 +437,7 @@ function Viewport({
   showCrosshair?: boolean
   canvasRef: (canvas: HTMLCanvasElement | null) => void
   minimapCanvasRef: (canvas: HTMLCanvasElement | null) => void
-  minimapCenterX: number
+  minimapView: ViewState
   showMinimapViewRect?: boolean
   showMinimap: boolean
   formatCoord: (v: ViewState) => string
@@ -406,7 +465,7 @@ function Viewport({
           {showMinimapViewRect && (
             <div
               className="minimap-viewrect"
-              style={viewRectStyle(view, minimapCenterX)}
+              style={viewRectStyle(view, minimapView)}
             />
           )}
           <span className="minimap-label">{name}</span>
@@ -418,26 +477,27 @@ function Viewport({
 
 function viewRectStyle(
   view: ViewState,
-  minimapCenterX: number,
+  minimapView: ViewState,
 ): React.CSSProperties {
-  // Minimap shows zoom=0 (window 4.0 wide). Mandelbrot and Julia use
-  // different canonical centres, so the view rectangle takes that centre
-  // from the owning viewport.
-  // The viewrect represents the visible region at the current zoom/pan.
-  // We approximate by scaling the rect to a fraction of the minimap.
-  const minimapWindow = 4.0
+  // The viewrect represents the visible region at the current zoom/pan
+  // inside the cached overview image shown by the minimap.
+  const minimapWindow = 4.0 / Math.pow(2, minimapView.zoom)
   const visibleWindow = 4.0 / Math.pow(2, view.zoom)
   const size = (visibleWindow / minimapWindow) * 100
-  // Centre the rect on the pan position relative to the minimap centre.
   const left =
-    50 + ((view.panX - minimapCenterX) / minimapWindow) * 100 - size / 2
-  const top = 50 + (view.panY / minimapWindow) * 100 - size / 2
+    50 + ((view.panX - minimapView.panX) / minimapWindow) * 100 - size / 2
+  const top =
+    50 + ((view.panY - minimapView.panY) / minimapWindow) * 100 - size / 2
   return {
     left: `${left}%`,
     top: `${top}%`,
     width: `${size}%`,
     height: `${size}%`,
   }
+}
+
+function isZoomedOutView(view: ViewState): boolean {
+  return view.zoom === 0
 }
 
 function formatMandelbrotCoord(v: ViewState): string {

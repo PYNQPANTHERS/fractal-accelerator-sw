@@ -16,7 +16,7 @@ The fuller record is in `../OPTIMISATIONS.md` and `../PAN_SMOOTHNESS.md`.
 - Julia coupling jobs use `mark_active=False` so they do not steal active-panel
   priority from the panel the user is dragging.
 - Minimap rendering is optional. The Mandelbrot minimap is a real backend job;
-  the Julia minimap is a frontend thumbnail of the main Julia canvas.
+  the Julia minimap is a frontend cache of the latest zoomed-out Julia frame.
 - Workload telemetry is optional and only enabled while the floating inspector
   is open.
 

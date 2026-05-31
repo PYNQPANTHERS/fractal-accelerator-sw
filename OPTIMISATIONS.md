@@ -132,7 +132,8 @@ Last updated: 2026-05-30.
 
 - **Where**: `server/main.py`, `web/src/DebugPanel.tsx`
 - **What**: The Mandelbrot minimap is a genuine low-priority overview render.
-  The Julia minimap mirrors the current main Julia canvas as a live thumbnail.
+  The Julia minimap caches the latest zoom=0 main Julia frame as its overview
+  and ignores zoomed Julia frames.
 - **Why**: Mandelbrot's overview is stable and useful as a separate camera.
   Julia's set changes whenever Mandelbrot's centre changes, so a separate
   backend minimap easily goes stale and competes with the main Julia render.
@@ -285,8 +286,8 @@ Last updated: 2026-05-30.
   ceiling. Current Performance mode uses preview for active interaction and full
   quality for the settled frame.
 - **Treating both minimaps as reused main data**: Mandelbrot still needs a real
-  overview camera. Julia is now the exception: it reuses the main canvas so it
-  cannot drift from the current Julia render.
+  overview camera. Julia is now the exception: it reuses zoomed-out main frames
+  as a cached overview so it avoids backend minimap work.
 
 ## Benchmark Plan
 

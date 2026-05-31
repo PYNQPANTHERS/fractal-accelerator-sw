@@ -51,7 +51,7 @@ Browser -> server JSON:
   `max_iter`, `quality`, and `interaction`.
 - `set_mode`: `performance` or `live_evolution`.
 - `set_minimaps`: enables/disables the Mandelbrot minimap render job. The Julia
-  minimap is a frontend thumbnail of the main Julia canvas.
+  minimap is frontend-only and reuses the latest zoomed-out main Julia frame.
 - `set_telemetry`: enables/disables Workload Inspector telemetry.
 
 Server -> browser binary:
