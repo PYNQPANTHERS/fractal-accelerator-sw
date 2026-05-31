@@ -34,8 +34,8 @@ Listens on `ws://localhost:8765` by default. Set `SERVER_HOST` / `SERVER_PORT` e
 
 ## Scheduling modes
 
-- **Performance** (default): active main panel gets first priority. The other
-  main panel fills gaps, then minimaps. The frontend also makes active
+- **Performance** (default): active main panel gets first priority, then the
+  other main panel fills gaps. The frontend also makes active
   Performance renders cheaper by sending preview quality and lower `max_iter`.
 - **Live Evolution**: main panels alternate when both have work pending. This is
   useful when you want the Mandelbrot/Julia relationship to update visibly
@@ -50,8 +50,8 @@ Browser -> server JSON:
 - `set_view`: panel id, frame sequence, pan, zoom, fractal type, Julia c,
   `max_iter`, `quality`, and `interaction`.
 - `set_mode`: `performance` or `live_evolution`.
-- `set_minimaps`: enables/disables the Mandelbrot minimap render job. The Julia
-  minimap is frontend-only and reuses the latest zoomed-out main Julia frame.
+- `set_minimaps`: compatibility/debug toggle for frontend minimap visibility.
+  Minimap images are frontend overview caches, not server render jobs.
 - `set_telemetry`: enables/disables Workload Inspector telemetry.
 
 Server -> browser binary:

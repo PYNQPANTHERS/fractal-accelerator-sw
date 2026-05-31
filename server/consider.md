@@ -15,16 +15,16 @@ The fuller record is in `../OPTIMISATIONS.md` and `../PAN_SMOOTHNESS.md`.
   settle. Preview is a mode inside the same simulator, not another simulator.
 - Julia coupling jobs use `mark_active=False` so they do not steal active-panel
   priority from the panel the user is dragging.
-- Minimap rendering is optional. The Mandelbrot minimap is a real backend job;
-  the Julia minimap is a frontend cache of the latest zoomed-out Julia frame.
+- Minimap rendering is frontend-only. The server keeps the toggle for protocol
+  compatibility, but minimap images are not queued backend jobs.
 - Workload telemetry is optional and only enabled while the floating inspector
   is open.
 
 ## Key Lesson
 
 Scheduling alone cannot make a Mandelbrot frame cheaper. It can prevent Julia
-or optional Mandelbrot minimap work from blocking the active panel, but the FPS
-ceiling rises only when the active render itself costs less.
+work from blocking the active panel, but the FPS ceiling rises only when the
+active render itself costs less.
 
 That maps well to the FPGA design: active navigation can use a lower iteration
 budget, coarser sampling, or tile-priority/cancellation policy; the settled view

@@ -48,7 +48,6 @@ PORT = int(os.environ.get("SERVER_PORT", "8765"))
 # Maximum bytes allowed in the WebSocket send buffer before we consider
 # the browser too slow and drop the current render.
 _MAX_SEND_BUFFER = 256 * 1024   # 256 KB — about 8 tiles worth
-_MINIMAP_MAX_ITER = 256
 _TELEMETRY_TILE_COLS = 4
 _TELEMETRY_TILE_ROWS = 4
 
@@ -61,16 +60,6 @@ def _config_for_mode(config: RenderConfig, mode: str) -> RenderConfig:
     if mode == "live_evolution" and config.preview:
         return replace(config, preview=False)
     return config
-
-
-def _mandelbrot_minimap_config() -> RenderConfig:
-    return RenderConfig(
-        pan_x=-0.5,
-        pan_y=0.0,
-        zoom=0,
-        fractal_type="mandelbrot",
-        max_iter=_MINIMAP_MAX_ITER,
-    )
 
 
 def _browser_can_receive(ws: WebSocketServerProtocol) -> bool:
@@ -226,23 +215,13 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
     """Handle one browser connection."""
     log.info("browser connected from %s", ws.remote_address)
     scheduler = Scheduler()
-    minimaps_enabled = True
     telemetry_enabled = False
 
     # Fix 3 — Per-panel state: track the last known config for each panel
     # so we can preserve Julia zoom/pan across Mandelbrot panning.
     panel_state: dict[int, RenderConfig] = {}
 
-    def queue_minimap(
-        panel_id: int,
-        config: RenderConfig,
-        frame_seq: int,
-    ) -> None:
-        panel_state[panel_id] = config
-        if minimaps_enabled:
-            scheduler.push(panel_id, config, frame_seq, mark_active=False)
-
-    # Seed minimaps with default configs so they render on connect.
+    # Seed main panel state so Julia coupling can preserve zoom/pan.
     _default_mandelbrot = RenderConfig(
         pan_x=-0.5, pan_y=0.0, zoom=0, fractal_type="mandelbrot"
     )
@@ -250,13 +229,11 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
         pan_x=0.0, pan_y=0.0, zoom=0, fractal_type="julia",
         julia_c_real=-0.7, julia_c_imag=0.27,
     )
-    _default_mandelbrot_minimap = _mandelbrot_minimap_config()
     panel_state[PANEL_MANDELBROT_MAIN]    = _default_mandelbrot
     panel_state[PANEL_JULIA_MAIN]         = _default_julia
-    queue_minimap(PANEL_MANDELBROT_MINIMAP, _default_mandelbrot_minimap, frame_seq=0)
 
     async def recv_loop() -> None:
-        nonlocal minimaps_enabled, telemetry_enabled
+        nonlocal telemetry_enabled
 
         async for raw in ws:
             if not isinstance(raw, str):
@@ -319,20 +296,12 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                 log.info("mode → %s", msg.mode)
 
             elif isinstance(msg, SetMinimapsMessage):
-                minimaps_enabled = msg.enabled
-                if minimaps_enabled:
-                    queue_minimap(
-                        PANEL_MANDELBROT_MINIMAP,
-                        _mandelbrot_minimap_config(),
-                        msg.frame_seq,
-                    )
-                else:
-                    scheduler.cancel(
-                        PANEL_MANDELBROT_MINIMAP,
-                        PANEL_JULIA_MINIMAP,
-                    )
+                scheduler.cancel(
+                    PANEL_MANDELBROT_MINIMAP,
+                    PANEL_JULIA_MINIMAP,
+                )
                 await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
-                log.info("minimaps → %s", "on" if minimaps_enabled else "off")
+                log.info("minimap cache → %s", "on" if msg.enabled else "off")
 
             elif isinstance(msg, SetTelemetryMessage):
                 telemetry_enabled = msg.enabled

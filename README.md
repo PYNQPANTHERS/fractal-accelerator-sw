@@ -16,8 +16,8 @@ Two large panels are rendered side by side:
 - **Mandelbrot**: pannable and wheel-zoomable; the panel centre is the Julia
   probe point.
 - **Julia**: pannable and wheel-zoomable; renders with `c = Mandelbrot centre`.
-- **Optional minimaps**: Mandelbrot uses a low-priority zoomed-out render;
-  Julia reuses the latest zoomed-out main Julia frame as a cached overview.
+- **Optional minimaps**: both are frontend overview caches. Mandelbrot uses the
+  canonical built-in overview key; Julia uses the latest zoomed-out Julia frame.
 - **Workload Inspector**: floating, draggable FPGA-facing debug overlay showing
   scheduler state, active/pending panel, frame sequence, preview/full quality,
   tile completion order, tile latency, stale drops, and render latency.

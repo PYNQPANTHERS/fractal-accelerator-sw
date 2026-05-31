@@ -39,9 +39,9 @@ Set `VITE_WS_URL=ws://host:8765` if the server is not on the same machine.
 - Double-buffered canvas painting avoids partial-frame patchwork.
 - Wrap-aware `frame_seq` dropping prevents stale bundles painting over the
   newest view.
-- Optional minimaps can be disabled from the debug panel. Mandelbrot minimap is
-  a real overview render; Julia minimap caches the latest zoomed-out main Julia
-  frame and draws the current view rectangle over it.
+- Optional minimaps can be disabled from the debug panel. Both minimaps are
+  frontend overview caches with view rectangles drawn over them; built-ins use
+  stable cache keys, and future arbitrary equations can use expression hashes.
 - Floating Workload Inspector enables telemetry only while open.
 
 ## FPGA-Facing Debug UI

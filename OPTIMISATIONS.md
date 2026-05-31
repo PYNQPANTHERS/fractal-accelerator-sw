@@ -106,7 +106,7 @@ Last updated: 2026-05-30.
 
 - **Where**: `server/scheduler.py`
 - **What**: Performance mode picks the active main panel first, then the other
-  main panel, then minimaps. Live Evolution alternates the two main panels.
+  main panel. Live Evolution alternates the two main panels.
 - **Why**: Performance mode should give Mandelbrot or Julia navigation first
   refusal; Live Evolution is for seeing both panels update together.
 - **Status**: **Keep**. Scheduling alone does not make frames cheaper, so the
@@ -130,13 +130,14 @@ Last updated: 2026-05-30.
 
 ### Optional Minimap Work
 
-- **Where**: `server/main.py`, `web/src/DebugPanel.tsx`
-- **What**: The Mandelbrot minimap is a genuine low-priority overview render.
-  The Julia minimap caches the latest zoom=0 main Julia frame as its overview
-  and ignores zoomed Julia frames.
-- **Why**: Mandelbrot's overview is stable and useful as a separate camera.
-  Julia's set changes whenever Mandelbrot's centre changes, so a separate
-  backend minimap easily goes stale and competes with the main Julia render.
+- **Where**: `web/src/App.tsx`, `web/src/DebugPanel.tsx`
+- **What**: Both minimaps are frontend overview caches. Mandelbrot caches the
+  canonical built-in overview; Julia caches the latest zoom=0 Julia frame and
+  ignores zoomed Julia frames.
+- **Why**: Minimap imagery no longer competes for scheduler slots, sim time,
+  tile-worker decode, or WebSocket bandwidth. The cache is keyed so common
+  built-ins can reuse stable identities and future arbitrary equations can use
+  expression hashes.
 - **Status**: **Keep**.
 
 ### Telemetry Only When Needed
@@ -285,9 +286,9 @@ Last updated: 2026-05-30.
 - **Full-quality only during active navigation**: clean image, but lower FPS
   ceiling. Current Performance mode uses preview for active interaction and full
   quality for the settled frame.
-- **Treating both minimaps as reused main data**: Mandelbrot still needs a real
-  overview camera. Julia is now the exception: it reuses zoomed-out main frames
-  as a cached overview so it avoids backend minimap work.
+- **Treating both minimaps as reused main data**: this is now the current path.
+  The tradeoff is that a brand-new equation needs a zoomed-out main render before
+  its minimap cache is fresh.
 
 ## Benchmark Plan
 

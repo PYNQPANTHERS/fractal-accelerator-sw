@@ -1,10 +1,10 @@
 /**
  * Top-level layout for the fractal explorer.
  *
- * Two full-bleed viewports (Mandelbrot | Julia) with optional minimaps
- * overlaid in the lower-left. Each viewport owns a 1024×1024 canvas
- * driven by a TilePainter; incoming binary frames are routed to the
- * painter whose panel id matches.
+ * Two full-bleed viewports (Mandelbrot | Julia) with optional cached
+ * minimaps overlaid in the lower-left. Each viewport owns a 1024×1024
+ * canvas driven by a TilePainter; incoming binary frames are routed to
+ * the painter whose panel id matches.
  *
  * Interaction: drag to pan, wheel to step zoom by ±1 (matches the FPGA's
  * 4-bit zoom register). Mandelbrot pan/zoom is the input — the server
@@ -38,6 +38,20 @@ const WS_URL =
 const MANDELBROT_INITIAL: ViewState = { panX: -0.5, panY: 0, zoom: 0 }
 const JULIA_INITIAL: ViewState = { panX: 0, panY: 0, zoom: 0 }
 const JULIA_C_INITIAL = { real: -0.7, imag: 0.27 }
+const BUILTIN_MANDELBROT_KEY = 'builtin:mandelbrot:v1'
+
+type MinimapCacheKey = string
+// Future arbitrary equations can use keys like `custom:<expression-hash>:v1`;
+// built-ins keep stable keys so overview caches survive ordinary navigation.
+
+interface FrameOverviewMeta {
+  cacheKey: MinimapCacheKey
+  view: ViewState
+}
+
+interface CachedOverview extends FrameOverviewMeta {
+  canvas: HTMLCanvasElement
+}
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('performance')
@@ -53,9 +67,16 @@ export default function App() {
   const seqRef = useRef(0)
   // Julia tracks the c implied by the Mandelbrot centre.
   const juliaCRef = useRef(JULIA_C_INITIAL)
-  const juliaFrameViewsRef = useRef<Map<number, ViewState>>(new Map())
-  const lastSentJuliaViewRef = useRef<ViewState>(JULIA_INITIAL)
-  const juliaOverviewCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const mandelbrotFrameMetaRef = useRef<Map<number, FrameOverviewMeta>>(new Map())
+  const juliaFrameMetaRef = useRef<Map<number, FrameOverviewMeta>>(new Map())
+  const lastSentJuliaMetaRef = useRef<FrameOverviewMeta>({
+    cacheKey: juliaCacheKey(JULIA_C_INITIAL),
+    view: JULIA_INITIAL,
+  })
+  const mandelbrotOverviewRef = useRef<CachedOverview | null>(null)
+  const juliaOverviewRef = useRef<CachedOverview | null>(null)
+  const [mandelbrotMinimapView, setMandelbrotMinimapView] =
+    useState<ViewState>(MANDELBROT_INITIAL)
   const [juliaMinimapView, setJuliaMinimapView] =
     useState<ViewState>(JULIA_INITIAL)
 
@@ -88,24 +109,34 @@ export default function App() {
     return seqRef.current
   }, [])
 
-  const rememberJuliaFrameView = useCallback((seq: number, view: ViewState) => {
-    const views = juliaFrameViewsRef.current
-    views.set(seq, view)
-    if (views.size > 128) {
-      const oldest = views.keys().next().value
-      if (oldest !== undefined) views.delete(oldest)
+  const rememberFrameMeta = useCallback((
+    map: React.MutableRefObject<Map<number, FrameOverviewMeta>>,
+    seq: number,
+    meta: FrameOverviewMeta,
+  ) => {
+    const frames = map.current
+    frames.set(seq, meta)
+    if (frames.size > 128) {
+      const oldest = frames.keys().next().value
+      if (oldest !== undefined) frames.delete(oldest)
     }
   }, [])
 
-  const getJuliaOverviewCanvas = useCallback(() => {
-    let canvas = juliaOverviewCanvasRef.current
-    if (!canvas) {
-      canvas = document.createElement('canvas')
+  const ensureOverview = useCallback((
+    ref: React.MutableRefObject<CachedOverview | null>,
+    meta: FrameOverviewMeta,
+  ) => {
+    let overview = ref.current
+    if (!overview || overview.cacheKey !== meta.cacheKey) {
+      const canvas = document.createElement('canvas')
       canvas.width = IMAGE_PX
       canvas.height = IMAGE_PX
-      juliaOverviewCanvasRef.current = canvas
+      overview = { ...meta, canvas }
+      ref.current = overview
+    } else {
+      overview.view = meta.view
     }
-    return canvas
+    return overview
   }, [])
 
   const commitMandelbrot = useCallback(
@@ -117,10 +148,20 @@ export default function App() {
         juliaCRef.current = { real: next.panX, imag: next.panY }
       }
       const seq = nextSeq()
+      const mandelbrotMeta = {
+        cacheKey: BUILTIN_MANDELBROT_KEY,
+        view: next,
+      }
+      rememberFrameMeta(mandelbrotFrameMetaRef, seq, mandelbrotMeta)
       fps.noteRender(seq, Panel.MandelbrotMain)
       if (panChanged) {
+        const juliaMeta = {
+          cacheKey: juliaCacheKey(juliaCRef.current),
+          view: lastSentJuliaMetaRef.current.view,
+        }
+        lastSentJuliaMetaRef.current = juliaMeta
+        rememberFrameMeta(juliaFrameMetaRef, seq, juliaMeta)
         fps.noteRender(seq, Panel.JuliaMain)
-        rememberJuliaFrameView(seq, lastSentJuliaViewRef.current)
       }
       sendRef.current({
         type: 'set_view',
@@ -135,14 +176,18 @@ export default function App() {
         interaction,
       })
     },
-    [nextSeq, fps, rememberJuliaFrameView],
+    [nextSeq, fps, rememberFrameMeta],
   )
 
   const commitJulia = useCallback(
     (next: ViewState, interaction: InteractionPhase = 'idle') => {
       const seq = nextSeq()
-      lastSentJuliaViewRef.current = next
-      rememberJuliaFrameView(seq, next)
+      const juliaMeta = {
+        cacheKey: juliaCacheKey(juliaCRef.current),
+        view: next,
+      }
+      lastSentJuliaMetaRef.current = juliaMeta
+      rememberFrameMeta(juliaFrameMetaRef, seq, juliaMeta)
       fps.noteRender(seq, Panel.JuliaMain)
       sendRef.current({
         type: 'set_view',
@@ -159,7 +204,7 @@ export default function App() {
         interaction,
       })
     },
-    [nextSeq, fps, rememberJuliaFrameView],
+    [nextSeq, fps, rememberFrameMeta],
   )
 
   // Both modes stream mid-drag; backpressure inside useViewState gates
@@ -216,55 +261,54 @@ export default function App() {
     (seq: number) => {
       fps.notePaint(seq, Panel.MandelbrotMain)
       mandelbrotView.notifyFrameApplied()
-    },
-    [fps, mandelbrotView.notifyFrameApplied],
-  )
-  const syncJuliaMinimap = useCallback(() => {
-    const overview = juliaOverviewCanvasRef.current
-    const mini = paintersRef.current[Panel.JuliaMini]
-    if (overview && mini) {
-      mini.copyFrom(overview)
-    }
-  }, [])
-  const captureJuliaOverview = useCallback(
-    (view: ViewState) => {
-      const main = paintersRef.current[Panel.JuliaMain]
-      if (!main) return
-      const overview = getJuliaOverviewCanvas()
-      const ctx = overview.getContext('2d', { alpha: false })
-      if (!ctx) return
-      ctx.imageSmoothingEnabled = false
-      ctx.drawImage(main.canvas, 0, 0, IMAGE_PX, IMAGE_PX)
-      setJuliaMinimapView(view)
-      const mini = paintersRef.current[Panel.JuliaMini]
-      if (mini) {
-        mini.copyFrom(overview)
+      const rendered = consumeFrameMeta(mandelbrotFrameMetaRef, seq)
+      if (rendered && isMandelbrotOverviewView(rendered.view)) {
+        captureOverview(
+          paintersRef,
+          Panel.MandelbrotMain,
+          Panel.MandelbrotMini,
+          mandelbrotOverviewRef,
+          rendered,
+          setMandelbrotMinimapView,
+          ensureOverview,
+        )
       }
     },
-    [getJuliaOverviewCanvas],
+    [fps, mandelbrotView.notifyFrameApplied, ensureOverview],
   )
-  const consumeJuliaFrameView = useCallback((seq: number) => {
-    const views = juliaFrameViewsRef.current
-    const view = views.get(seq)
-    views.delete(seq)
-    return view
+  const syncMandelbrotMinimap = useCallback(() => {
+    const overview = mandelbrotOverviewRef.current
+    const mini = paintersRef.current[Panel.MandelbrotMini]
+    if (overview && mini) {
+      mini.copyFrom(overview.canvas)
+    }
+  }, [])
+  const syncJuliaMinimap = useCallback(() => {
+    const overview = juliaOverviewRef.current
+    const mini = paintersRef.current[Panel.JuliaMini]
+    if (overview && mini) {
+      mini.copyFrom(overview.canvas)
+    }
   }, [])
   const onJuliaFrame = useCallback(
     (seq: number) => {
       fps.notePaint(seq, Panel.JuliaMain)
       juliaView.notifyFrameApplied()
-      const renderedView =
-        consumeJuliaFrameView(seq) ?? lastSentJuliaViewRef.current
-      if (renderedView && isZoomedOutView(renderedView)) {
-        captureJuliaOverview(renderedView)
+      const rendered =
+        consumeFrameMeta(juliaFrameMetaRef, seq) ?? lastSentJuliaMetaRef.current
+      if (rendered && isZoomedOutView(rendered.view)) {
+        captureOverview(
+          paintersRef,
+          Panel.JuliaMain,
+          Panel.JuliaMini,
+          juliaOverviewRef,
+          rendered,
+          setJuliaMinimapView,
+          ensureOverview,
+        )
       }
     },
-    [
-      fps,
-      juliaView.notifyFrameApplied,
-      consumeJuliaFrameView,
-      captureJuliaOverview,
-    ],
+    [fps, juliaView.notifyFrameApplied, ensureOverview],
   )
 
   // Stable ref callbacks — without `useMemo`, every App re-render (e.g. mode
@@ -285,8 +329,8 @@ export default function App() {
     [juliaView.canvasRef, onJuliaFrame],
   )
   const registerMandelbrotMini = useMemo(
-    () => makeRegister(paintersRef, Panel.MandelbrotMini),
-    [],
+    () => makeRegister(paintersRef, Panel.MandelbrotMini, null, syncMandelbrotMinimap),
+    [syncMandelbrotMinimap],
   )
   const registerJuliaMini = useMemo(
     () => makeRegister(paintersRef, Panel.JuliaMini, null, syncJuliaMinimap),
@@ -339,7 +383,7 @@ export default function App() {
           showCrosshair
           canvasRef={registerMandelbrotMain}
           minimapCanvasRef={registerMandelbrotMini}
-          minimapView={MANDELBROT_INITIAL}
+          minimapView={mandelbrotMinimapView}
           showMinimap={debugFlags.minimaps}
           formatCoord={formatMandelbrotCoord}
         />
@@ -496,8 +540,57 @@ function viewRectStyle(
   }
 }
 
+function consumeFrameMeta(
+  map: React.MutableRefObject<Map<number, FrameOverviewMeta>>,
+  seq: number,
+): FrameOverviewMeta | undefined {
+  const meta = map.current.get(seq)
+  map.current.delete(seq)
+  return meta
+}
+
+function captureOverview(
+  paintersRef: React.MutableRefObject<Partial<Record<Panel, TilePainter>>>,
+  sourcePanel: Panel,
+  minimapPanel: Panel,
+  overviewRef: React.MutableRefObject<CachedOverview | null>,
+  meta: FrameOverviewMeta,
+  setMinimapView: (view: ViewState) => void,
+  ensureOverview: (
+    ref: React.MutableRefObject<CachedOverview | null>,
+    meta: FrameOverviewMeta,
+  ) => CachedOverview,
+): void {
+  const source = paintersRef.current[sourcePanel]
+  if (!source) return
+  const overview = ensureOverview(overviewRef, meta)
+  const ctx = overview.canvas.getContext('2d', { alpha: false })
+  if (!ctx) return
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(source.canvas, 0, 0, IMAGE_PX, IMAGE_PX)
+  setMinimapView(meta.view)
+  const mini = paintersRef.current[minimapPanel]
+  if (mini) {
+    mini.copyFrom(overview.canvas)
+  }
+}
+
+function isMandelbrotOverviewView(view: ViewState): boolean {
+  return view.zoom === MANDELBROT_INITIAL.zoom
+    && view.panX === MANDELBROT_INITIAL.panX
+    && view.panY === MANDELBROT_INITIAL.panY
+}
+
 function isZoomedOutView(view: ViewState): boolean {
   return view.zoom === 0
+}
+
+function juliaCacheKey(c: { real: number; imag: number }): MinimapCacheKey {
+  return `builtin:julia:c=${cacheNumber(c.real)},${cacheNumber(c.imag)}:v1`
+}
+
+function cacheNumber(n: number): string {
+  return Number.isFinite(n) ? n.toPrecision(12) : String(n)
 }
 
 function formatMandelbrotCoord(v: ViewState): string {

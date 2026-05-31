@@ -1,18 +1,6 @@
 from __future__ import annotations
 
-from server.main import _mandelbrot_minimap_config
 from server.protocol import SetMinimapsMessage, SetTelemetryMessage, parse_message
-
-
-def test_mandelbrot_minimap_config_is_static_overview():
-    cfg = _mandelbrot_minimap_config()
-
-    assert cfg.pan_x == -0.5
-    assert cfg.pan_y == 0.0
-    assert cfg.zoom == 0
-    assert cfg.fractal_type == "mandelbrot"
-    assert cfg.max_iter == 256
-    assert cfg.preview is False
 
 
 def test_parse_set_minimaps_message():

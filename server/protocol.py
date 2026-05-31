@@ -74,7 +74,7 @@ class SetModeMessage:
 
 @dataclass
 class SetMinimapsMessage:
-    """Browser toggled minimap rendering."""
+    """Browser toggled frontend minimap visibility."""
     enabled: bool
     frame_seq: int = 0
 

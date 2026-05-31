@@ -19,7 +19,7 @@
  *                       quality?: "full" | "preview",
  *                       interaction?: "idle" | "active" | "final" }
  *   { type: "set_mode", mode: "performance" | "live_evolution" }
- *   { type: "set_minimaps", enabled, frame_seq }
+ *   { type: "set_minimaps", enabled, frame_seq } // frontend minimap toggle
  *   { type: "set_telemetry", enabled }
  */
 
