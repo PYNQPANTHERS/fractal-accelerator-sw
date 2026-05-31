@@ -166,11 +166,11 @@ Last updated: 2026-05-30.
 
 - **Where**: `server/protocol.py`, `server/main.py`,
   `web/src/protocol.ts`
-- **What**: The server collects the 16 browser chunk payloads for one render and
-  sends one binary WebSocket bundle.
-- **Why**: Reduces per-`ws.send` overhead while preserving per-tile timing via
-  optional telemetry.
-- **Status**: **Load-bearing for browser throughput**.
+- **What**: The server observes chunk completion progressively for telemetry,
+  but sends the image payload as one binary WebSocket bundle per render.
+- **Why**: Reduces WebSocket/message churn and avoids patchwork visible updates.
+  The Workload Inspector still shows readiness via the telemetry channel.
+- **Status**: **Load-bearing for browser smoothness**.
 
 ### WebSocket Send Backpressure
 
@@ -248,7 +248,8 @@ Last updated: 2026-05-30.
 
 - **Where**: `web/src/tilePainter.ts`
 - **What**: Browser chunks draw into an off-screen staging canvas. The visible
-  canvas is swapped only when the frame's chunks are ready.
+  canvas swaps only when the frame's chunks are ready. Late worker results from
+  older frame sequences are dropped.
 - **Why**: Avoids half-old / half-new patchwork during chunk arrival.
 - **Status**: **Load-bearing**.
 

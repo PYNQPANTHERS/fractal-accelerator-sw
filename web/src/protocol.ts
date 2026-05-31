@@ -1,7 +1,7 @@
 /**
  * Wire protocol shared with the server (see server/protocol.py).
  *
- * Server → client: binary tile frames, 16-byte header + payload.
+ * Server → client: binary chunk frames, 16-byte header + payload.
  *   u8  msg_type     0x01 = tile
  *   u8  panel_id     0..3 (see Panel below)
  *   u8  tile_id      0..15 row-major within the 4×4 panel grid
@@ -59,8 +59,8 @@ export interface TileFrame {
  * Parse one binary WebSocket message into TileFrames.
  *
  * Two formats supported:
- *   MSG_TILE        — single tile, 16-byte header + payload
- *   MSG_TILE_BUNDLE — N tiles, 16-byte header + N × (1 + payload)
+ *   MSG_TILE        — one 256 x 256 chunk
+ *   MSG_TILE_BUNDLE — current path, N chunks in one message
  *
  * Always returns an array — callers iterate and deliver each TileFrame
  * to the painter, regardless of how the server chose to pack them.

@@ -111,16 +111,15 @@ async def _render_and_stream(
     scheduler: Scheduler,
     telemetry_enabled: Callable[[], bool],
 ) -> None:
-    """Pick the next job, render all 16 tiles, stream the result to the browser.
+    """Pick the next job, render all 16 chunks, and stream a bundled frame.
 
     Fix 1 — Event wake-up:
         Awaits scheduler.job_available instead of sleeping, so the render
         loop starts immediately when a new set_view arrives.
 
     Fix 2 — render_image (single round trip):
-        One command to the C++ sim, 16 tile frames streamed back as each
-        completes for telemetry. The binary payload is bundled into one
-        WebSocket send to reduce browser/socket overhead.
+        One command to the C++ sim, 16 chunk frames observed as each completes
+        for telemetry, then bundled into one WebSocket send for the image path.
 
     Fix 4 — Backpressure:
         If the browser's send buffer is too full, skip this render and wait
@@ -168,8 +167,6 @@ async def _render_and_stream(
         },
     )
 
-    # Collect all tiles for this render, then send them in one binary
-    # WS frame. Avoids per-tile send overhead (~0.2 ms × N tiles).
     tiles: list[tuple[int, bytes]] = []
     async for tile_id, tile_bytes, tile_elapsed_ms in render_image(config):
         tiles.append((tile_id, tile_bytes))
@@ -190,12 +187,11 @@ async def _render_and_stream(
             },
         )
     if tiles:
-        bundle = pack_tile_bundle(
+        await ws.send(pack_tile_bundle(
             panel_id=panel_id,
             frame_seq=job.frame_seq,
             tiles=tiles,
-        )
-        await ws.send(bundle)
+        ))
         await _send_telemetry(
             ws,
             telemetry_enabled(),

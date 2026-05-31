@@ -5,7 +5,7 @@ This note separates three granularities that are easy to conflate:
 | Layer | Owner | Unit | Why |
 | --- | --- | --- | --- |
 | Hardware completion | FPGA / PL | 16 x 16 RTL tile | Matches BRAM layout, core batches, and `tile_done` cadence. |
-| Transport / paint | PS -> browser | 256 x 256 chunk, optionally bundled per frame | Amortises WebSocket, worker decode, and canvas draw cost. |
+| Transport / paint | PS -> browser | 256 x 256 chunk, optionally bundled per frame | Keeps image transport coarse enough for the browser while allowing batching for smoothness. |
 | Progress / debug | Workload Inspector | 16 x 16 RTL tile telemetry | Shows true hardware behaviour rather than the display abstraction. |
 
 ## Hardware Completion

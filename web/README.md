@@ -23,7 +23,7 @@ Set `VITE_WS_URL=ws://host:8765` if the server is not on the same machine.
    bundles.
 4. `tileWorker.ts` unpacks nibble-packed 4-bit tile payloads off the main
    thread.
-5. `TilePainter` stages bitmaps and swaps the visible canvas when all 16 tiles
+5. `TilePainter` stages bitmaps and swaps the visible canvas when all 16 chunks
    for a `frame_seq` are ready.
 
 ## Current Frontend Optimisations

@@ -60,10 +60,8 @@ Two large panels are rendered side by side:
 - Client backpressure keeps at most one in-flight render per panel interaction;
   the latest view overwrites any pending view.
 - Tile unpacking and `ImageBitmap` creation happen in a Web Worker.
-- The painter double-buffers and swaps only when the current frame's chunks
-  arrive.
-- Binary WebSocket sends are bundled per render rather than sent as 16 separate
-  chunk messages.
+- Binary WebSocket sends are bundled per render, and the painter swaps the
+  frame atomically once all 16 browser chunks arrive.
 - Workload telemetry is opt-in and only enabled while the floating inspector is
   open, so the normal render path does not pay for debug data.
 

@@ -4,9 +4,8 @@
  * The hot pipeline (unpack → ImageData → ImageBitmap) lives in a Web
  * Worker (`tileWorker.ts`). This painter just takes already-made
  * ImageBitmaps and blits them into the staging canvas via drawImage.
- * When all tiles for a frame_seq land, staging swaps to the visible
- * canvas atomically. Stale bitmaps (from older frame_seqs) are
- * dropped at the boundary.
+ * When all chunks for a frame_seq land, staging swaps to the visible
+ * canvas atomically.
  *
  * Memory: 2× canvas per panel (1024² RGBA ≈ 4 MB). Cheap on
  * desktop, fine on mobile.
@@ -55,13 +54,20 @@ export class TilePainter {
     tileId: number,
     bitmap: ImageBitmap,
   ): void {
+    if (this.currentSeq >= 0 && isOlderSeq(frameSeq, this.currentSeq)) {
+      bitmap.close()
+      return
+    }
+
     if (frameSeq !== this.currentSeq) {
       this.currentSeq = frameSeq
       this.tilesGot.clear()
     }
 
     const { col, row } = tileGridPosition(tileId)
-    this.stagingCtx.drawImage(bitmap, col * TILE_PX, row * TILE_PX)
+    const x = col * TILE_PX
+    const y = row * TILE_PX
+    this.stagingCtx.drawImage(bitmap, x, y)
     bitmap.close()
 
     this.tilesGot.add(tileId)
@@ -118,3 +124,8 @@ export function unpackIntoRgba(
 }
 
 export const unpackIntoImageData = unpackIntoRgba
+
+function isOlderSeq(a: number, b: number): boolean {
+  const diff = (b - a) & 0xffff
+  return diff !== 0 && diff < 0x8000
+}

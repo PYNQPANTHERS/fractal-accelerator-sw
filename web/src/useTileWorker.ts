@@ -70,9 +70,8 @@ export function useTileWorker(
         const jobId = ++jobIdRef.current
         // Detach the payload's underlying buffer for transfer. The
         // Uint8Array we constructed in parseMessage shares the source
-        // ArrayBuffer; we copy it because the source contains other
-        // tiles in the same bundled WS message and we can't transfer
-        // a slice. The copy is ~32 KB / tile — cheap.
+        // ArrayBuffer; copy it so this worker owns a transferable buffer.
+        // The copy is ~32 KB / chunk — cheap.
         const copy = new Uint8Array(tile.payload).buffer
         w.postMessage(
           {

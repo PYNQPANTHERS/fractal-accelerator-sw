@@ -56,9 +56,10 @@ Browser -> server JSON:
 
 Server -> browser binary:
 
-- `MSG_TILE_BUNDLE`: one WebSocket binary frame containing all 16 tile payloads
-  for one panel/frame sequence. These payloads are browser-facing 256 x 256
-  chunks, not individual 16 x 16 RTL tiles.
+- `MSG_TILE_BUNDLE`: one WebSocket binary frame containing all 16 chunk
+  payloads for one panel/frame sequence. These payloads are browser-facing
+  256 x 256 chunks, not individual 16 x 16 RTL tiles.
+- `MSG_TILE`: supported parser format for a single 256 x 256 chunk.
 
 Server -> browser JSON telemetry, only when enabled:
 

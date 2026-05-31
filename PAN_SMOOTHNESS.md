@@ -23,7 +23,7 @@ Current pan/zoom smoothness comes from:
 - one in-flight render with last-write-wins pending view
 - frame-applied residual transforms routed through the same clamp path
 - Performance-mode active preview renders plus full-quality settled renders
-- double-buffered canvas swaps only after all 16 tiles arrive
+- double-buffered canvas swaps only after all 16 chunks arrive
 
 The practical lesson from the experiments: scheduling helps avoid wasted work,
 but the FPS ceiling only rises when active frames are cheaper. For the FPGA
