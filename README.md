@@ -33,7 +33,11 @@ Two large panels are rendered side by side:
   inside the same simulator binary, used only for Performance-mode pan/zoom
   before a full-quality settled render is requested.
 - Main image is **1024 x 1024**.
-- Tile geometry is **4 x 4**, 16 tiles total, each **256 x 256**.
+- Browser-facing chunk geometry is **4 x 4**, 16 chunks total, each
+  **256 x 256**.
+- The FPGA path should expose finer **16 x 16** RTL tile completion to the
+  Workload Inspector through telemetry, while the PS Tile Streamer aggregates
+  those microtiles into the existing 256 x 256 browser chunks.
 - Pixel format is nibble-packed **4-bit palette indices**.
 - There is no active 5x5/6x6 pre-rendered margin and no predictive prefetch in
   the current fast path. Those were tested and rolled back because the extra
@@ -56,14 +60,16 @@ Two large panels are rendered side by side:
 - Client backpressure keeps at most one in-flight render per panel interaction;
   the latest view overwrites any pending view.
 - Tile unpacking and `ImageBitmap` creation happen in a Web Worker.
-- The painter double-buffers and swaps only when all 16 tiles for a frame arrive.
+- The painter double-buffers and swaps only when the current frame's chunks
+  arrive.
 - Binary WebSocket sends are bundled per render rather than sent as 16 separate
-  tile messages.
+  chunk messages.
 - Workload telemetry is opt-in and only enabled while the floating inspector is
   open, so the normal render path does not pay for debug data.
 
-More detail is in [OPTIMISATIONS.md](OPTIMISATIONS.md) and the pan/jitter
-history is in [PAN_SMOOTHNESS.md](PAN_SMOOTHNESS.md).
+More detail is in [OPTIMISATIONS.md](OPTIMISATIONS.md), the FPGA streaming
+contract is in [FPGA_TILE_STREAMING.md](FPGA_TILE_STREAMING.md), and the
+pan/jitter history is in [PAN_SMOOTHNESS.md](PAN_SMOOTHNESS.md).
 
 ## Run
 

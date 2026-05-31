@@ -20,7 +20,9 @@ later call a PYNQ/FPGA driver instead.
 - Track active/final interaction state for Performance mode.
 - Drive `sim/renderer.py` now, or later `driver/pynq_driver.py`.
 - Emit optional scheduler/tile/render telemetry for the Workload Inspector.
-- Pack the 16 tiles for a render into one binary WebSocket bundle.
+- Pack the 16 browser chunks for a render into one binary WebSocket bundle.
+- In the FPGA path, aggregate 16 x 16 RTL tile completions into 256 x 256
+  browser chunks through the PS Tile Streamer.
 
 ## Run
 
@@ -54,13 +56,16 @@ Browser -> server JSON:
 Server -> browser binary:
 
 - `MSG_TILE_BUNDLE`: one WebSocket binary frame containing all 16 tile payloads
-  for one panel/frame sequence.
+  for one panel/frame sequence. These payloads are browser-facing 256 x 256
+  chunks, not individual 16 x 16 RTL tiles.
 
 Server -> browser JSON telemetry, only when enabled:
 
 - `scheduler`: mode, active panel, interacting panel, pending jobs.
 - `render_started`: panel, frame sequence, quality, `max_iter`, backend.
 - `tile_done`: tile id and elapsed time as observed by the backend boundary.
+  With FPGA telemetry this can be the 16 x 16 RTL tile grid; it does not have to
+  match the image payload granularity.
 - `render_finished`: total render latency and tile count.
 - `render_dropped`: server-side backpressure drop.
 
@@ -68,11 +73,15 @@ Client-side stale frame drops are also fed into the same inspector state.
 
 ## FPGA Mapping
 
-The server should keep seeing one `RenderConfig` in and tile completions out.
-With the simulator, completions are stdout frames. With hardware, completions
-should come from the PS driver after it observes PL tile id plus tile done /
-transfer-complete status. The frontend does not need to know which backend
-produced the event.
+The server should keep seeing one `RenderConfig` in and browser chunks out. With
+the simulator, completion currently arrives as chunk-shaped stdout frames. With
+hardware, completion arrives as 16 x 16 RTL tile readiness inside a 256 x 256
+sixteenth. The PS Tile Streamer should accumulate those RTL tiles into a chunk
+buffer, flush browser chunks through the existing binary protocol, and emit
+per-RTL-tile telemetry only while the Workload Inspector is open.
+
+See [../FPGA_TILE_STREAMING.md](../FPGA_TILE_STREAMING.md) for the full
+granularity contract.
 
 ## Files
 

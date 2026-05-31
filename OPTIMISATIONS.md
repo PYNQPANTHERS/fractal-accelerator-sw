@@ -16,8 +16,9 @@ Last updated: 2026-05-30.
 - **Preview is an in-simulator shortcut**: active Performance-mode pan/zoom can
   request a subsampled preview kernel from the same simulator. It is not a
   second simulator implementation.
-- **4 x 4 tile grid**: 16 tiles per render, each 256 x 256, giving a 1024 x 1024
-  image.
+- **4 x 4 browser chunk grid**: 16 chunks per render, each 256 x 256, giving a
+  1024 x 1024 image. The FPGA path can report finer 16 x 16 RTL tile telemetry
+  without changing this image protocol.
 - **No active prefetch margin**: 5x5, 6x6, and 7x7 margin experiments were
   tried and rolled back because extra tile work lowered the frame ceiling and
   increased visible jitter.
@@ -25,7 +26,7 @@ Last updated: 2026-05-30.
   is disabled while `CANVAS_MARGIN_FRAC` is zero. With no rendered margin,
   prediction can expose unrendered edges instead of hiding them.
 - **Nibble-packed output**: each pixel is a 4-bit palette index, two pixels per
-  byte. A tile payload is 32 KB.
+  byte. A 256 x 256 browser chunk payload is 32 KB.
 - **FPGA-friendly config**: `RenderConfig` mirrors the intended PL register
   shape: pan, zoom, fractal type, Julia c, max iteration budget, and preview
   flag.
@@ -35,8 +36,8 @@ Last updated: 2026-05-30.
 ### Parallel Tile Rendering
 
 - **Where**: `sim/cpp/src/main.cpp`
-- **What**: `render_image` launches one worker per tile and streams tile frames
-  back to Python as workers complete.
+- **What**: `render_image` launches one worker per browser chunk and streams
+  chunk frames back to Python as workers complete.
 - **Why**: It mimics the hardware model: independent tile/sixteenth workers
   complete in their own order, then the PS side serialises results.
 - **Status**: **Load-bearing**. It gives realistic tile-completion telemetry and
@@ -46,7 +47,7 @@ Last updated: 2026-05-30.
 
 - **Where**: `sim/cpp/src/main.cpp`, `sim/renderer.py`
 - **What**: Python yields `(tile_id, payload, elapsed_ms)` as each simulator
-  tile frame is received.
+  chunk frame is received.
 - **Why**: The Workload Inspector can show real "tile completed at 3.2 ms"
   style timings now, and the same interface maps cleanly to future PL
   `tile_done` / transfer-complete events.
@@ -145,12 +146,26 @@ Last updated: 2026-05-30.
 - **Why**: The normal render path should not pay debug overhead.
 - **Status**: **Keep**.
 
+### PS Tile Streamer Aggregation
+
+- **Where**: future `driver/` FPGA path.
+- **What**: The PS Tile Streamer accumulates 16 x 16 RTL tile completions into
+  256 x 256 chunk buffers, then flushes those chunks through the existing
+  browser image protocol.
+- **Why**: The FPGA's natural completion unit is a 16 x 16 tile, while the
+  browser's efficient paint/transport unit is a 256 x 256 chunk. Keeping the PS
+  as the explicit aggregation point preserves wire optimisations and lets the
+  Workload Inspector show true hardware readiness through separate telemetry.
+- **Status**: **Design contract for FPGA integration**. Prefer full-chunk flushes
+  for settled renders; consider short timeout flushes during interaction so a
+  slow microtile does not stall visible progress.
+
 ### Bundled Binary Tile Sends
 
 - **Where**: `server/protocol.py`, `server/main.py`,
   `web/src/protocol.ts`
-- **What**: The server collects the 16 tile payloads for one render and sends
-  one binary WebSocket bundle.
+- **What**: The server collects the 16 browser chunk payloads for one render and
+  sends one binary WebSocket bundle.
 - **Why**: Reduces per-`ws.send` overhead while preserving per-tile timing via
   optional telemetry.
 - **Status**: **Load-bearing for browser throughput**.
@@ -230,9 +245,9 @@ Last updated: 2026-05-30.
 ### Double-Buffered Painter
 
 - **Where**: `web/src/tilePainter.ts`
-- **What**: Tiles draw into an off-screen staging canvas. The visible canvas is
-  swapped only when all 16 tiles for the frame are ready.
-- **Why**: Avoids half-old / half-new patchwork during tile arrival.
+- **What**: Browser chunks draw into an off-screen staging canvas. The visible
+  canvas is swapped only when the frame's chunks are ready.
+- **Why**: Avoids half-old / half-new patchwork during chunk arrival.
 - **Status**: **Load-bearing**.
 
 ### Stable Canvas Registration
@@ -248,9 +263,11 @@ Last updated: 2026-05-30.
 
 - **Where**: `web/src/WorkloadInspector.tsx`
 - **What**: A draggable floating panel shows only the two main panels, with a
-  compact collapsed summary and a 4 x 4 tile grid per lane.
-- **Why**: Lets us inspect scheduling and tile completion while still panning
-  and zooming the main UI.
+  compact collapsed summary and a backend-defined grid per lane. Simulator
+  telemetry currently appears as 4 x 4 browser chunks; FPGA telemetry can appear
+  as the 16 x 16 RTL microtile grid.
+- **Why**: Lets us inspect scheduling and true hardware tile completion while
+  still panning and zooming the main UI.
 - **Status**: **Keep**. This is a differentiating frontend feature and maps
   directly to future `tile_id` + `tile_done` PL status.
 

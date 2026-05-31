@@ -786,6 +786,22 @@ body::after {
   margin-top: 1px;
 }
 
+.workload-grid-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1.35;
+}
+
+.workload-grid-caption span:last-child {
+  text-align: right;
+}
+
 .workload-badges {
   display: flex;
   justify-content: flex-end;
@@ -839,6 +855,10 @@ body::after {
   margin: 8px auto 7px;
 }
 
+.workload-tile-grid-rtl-tile {
+  gap: 2px;
+}
+
 .workload-tile {
   display: grid;
   place-items: center;
@@ -856,6 +876,10 @@ body::after {
     border-color 120ms ease,
     color 120ms ease,
     box-shadow 120ms ease;
+}
+
+.workload-tile-grid-rtl-tile .workload-tile {
+  border-color: rgba(255, 255, 255, 0.045);
 }
 
 .workload-tile.done {
