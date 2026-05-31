@@ -1,229 +1,119 @@
-"""Python-side client for the C++ simulator binary.
+from dataclasses import dataclass
 
-The simulator (sim/cpp/) is a long-running C++ process. This module spawns
-it once per Python session, sends JSON commands on its stdin, and reads
-framed binary responses from its stdout.
-
-The same shape will apply to the eventual real PL driver: send a command,
-receive bytes. So callers can be written against this interface and later
-swapped to a PynqDriver with minimal change.
-"""
-
-from __future__ import annotations
-
-import asyncio
-import atexit
-from collections.abc import Iterator
-import json
-import struct
-import subprocess
-import threading
-import time
-from pathlib import Path
-
-from sim.config import RenderConfig
+import numpy as np
 
 
-CHUNK_PIXELS = 256
-CHUNK_BYTES  = CHUNK_PIXELS * CHUNK_PIXELS // 2   # 32768
-# 4x4 grid of 256-px browser chunks: 1024-px rendered image, no pre-rendered
-# pan margin in the current fast path.
-CHUNKS_PER_IMAGE = 16
+TILE_PIXELS = 256          # one tile is TILE_PIXELS x TILE_PIXELS pixels
+TILE_BYTES = TILE_PIXELS * TILE_PIXELS // 2   # nibble-packed: two pixels per byte
+IMAGE_PIXELS = 1024        # full panel image is IMAGE_PIXELS x IMAGE_PIXELS
+TILES_PER_SIDE = IMAGE_PIXELS // TILE_PIXELS  # 4
+PALETTE_BANDS = 16         # 4-bit iteration count: 16 distinct values
 
-# Frame format from sim/cpp/src/response.hpp:
-#   byte 0    : message_type
-#   byte 1    : chunk_id
-#   bytes 2-5 : payload length, little-endian uint32
-_HEADER_FMT  = "<BBI"
-_HEADER_SIZE = struct.calcsize(_HEADER_FMT)   # 6
-
-_MSG_CHUNK = 0x01
-_MSG_PONG  = 0x02
-_MSG_ERROR = 0xFF
-
-_BINARY_PATH = Path(__file__).parent / "cpp" / "build" / "fractal_sim"
+# Width of the complex-plane window at zoom level 0. The window halves with
+# each zoom step, mirroring the PL's zoom LUT.
+WINDOW_AT_ZOOM_0 = 4.0
 
 
-class SimError(RuntimeError):
-    """Raised when the simulator returns an error frame or exits unexpectedly."""
-
-
-class _Sim:
-    """Wraps the long-running C++ subprocess."""
-
-    def __init__(self) -> None:
-        if not _BINARY_PATH.exists():
-            raise SimError(
-                f"sim binary not found at {_BINARY_PATH}. "
-                "Build it: cd sim/cpp && cmake -B build && cmake --build build"
-            )
-        self._proc = subprocess.Popen(
-            [str(_BINARY_PATH)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        self._lock = threading.Lock()
-
-    def _send(self, command: dict) -> None:
-        """Write one JSON command to the subprocess stdin. Caller holds lock."""
-        line = (json.dumps(command) + "\n").encode("utf-8")
-        assert self._proc.stdin is not None
-        try:
-            self._proc.stdin.write(line)
-            self._proc.stdin.flush()
-        except BrokenPipeError as e:
-            raise SimError("sim subprocess closed stdin") from e
-
-    def _read_frame(self) -> tuple[int, int, bytes]:
-        """Read one framed response from stdout. Caller holds lock."""
-        assert self._proc.stdout is not None
-        header = self._proc.stdout.read(_HEADER_SIZE)
-        if len(header) < _HEADER_SIZE:
-            raise SimError("sim subprocess closed stdout before a complete header")
-        msg_type, chunk_id, length = struct.unpack(_HEADER_FMT, header)
-        payload = self._proc.stdout.read(length) if length > 0 else b""
-        if len(payload) < length:
-            raise SimError(
-                f"sim stdout closed mid-payload ({len(payload)}/{length} bytes)"
-            )
-        return msg_type, chunk_id, payload
-
-    def request(self, command: dict) -> tuple[int, int, bytes]:
-        """Send one command, read one response frame."""
-        with self._lock:
-            self._send(command)
-            return self._read_frame()
-
-    def request_stream(self, command: dict, n_frames: int) -> Iterator[tuple[int, int, bytes]]:
-        """Send one command, read n_frames response frames.
-
-        Holds the lock for the entire multi-frame sequence so no other
-        caller can interleave commands while we're reading responses.
-        Yields each frame as soon as it's received from the subprocess.
-        """
-        with self._lock:
-            self._send(command)
-            for _ in range(n_frames):
-                yield self._read_frame()
-
-    def close(self) -> None:
-        if self._proc.stdin and not self._proc.stdin.closed:
-            self._proc.stdin.close()
-        try:
-            self._proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            self._proc.kill()
-
-
-# Module-level singleton. One subprocess per Python process.
-_sim_instance: _Sim | None = None
-_sim_instance_lock = threading.Lock()
-
-
-def _get_sim() -> _Sim:
-    global _sim_instance
-    with _sim_instance_lock:
-        if _sim_instance is None:
-            _sim_instance = _Sim()
-            atexit.register(_sim_instance.close)
-        return _sim_instance
-
-
-def render_chunk(config: RenderConfig, chunk_id: int) -> bytes:
-    """Render one chunk. Returns 32768 bytes of nibble-packed 4-bit indices."""
-    if not 0 <= chunk_id <= 15:
-        raise ValueError(f"chunk_id must be 0..15, got {chunk_id}")
-
-    sim = _get_sim()
-    msg_type, returned_id, payload = sim.request({
-        "cmd":          "render_chunk",
-        "chunk_id":     chunk_id,
-        "pan_x":        config.pan_x,
-        "pan_y":        config.pan_y,
-        "zoom":         config.zoom,
-        "fractal_type": config.fractal_type,
-        "julia_c_real": config.julia_c_real,
-        "julia_c_imag": config.julia_c_imag,
-        "max_iter":     config.max_iter,
-    })
-    if msg_type == _MSG_ERROR:
-        raise SimError(payload.decode("utf-8", errors="replace"))
-    if msg_type != _MSG_CHUNK:
-        raise SimError(f"expected chunk, got {msg_type:#x}")
-    if returned_id != chunk_id:
-        raise SimError(f"chunk_id mismatch: sent {chunk_id}, got {returned_id}")
-    if len(payload) != CHUNK_BYTES:
-        raise SimError(f"expected {CHUNK_BYTES} bytes, got {len(payload)}")
-    return payload
-
-
-async def render_image(config: RenderConfig):
-    """Render all 16 chunks, yielding (chunk_id, bytes, elapsed_ms) per chunk.
-
-    One round trip to the C++ binary (render_image command). The binary
-    computes all 16 browser chunks in parallel threads and streams each frame back
-    as its worker completes. The elapsed_ms value is measured at the Python
-    driver boundary, which mirrors the future Pynq path: chunk-ready status
-    received by PS, then forwarded to the websocket layer.
+@dataclass(frozen=True)
+class RenderConfig:
+    """One render request.
+    Fields mirror the AXI register map's PL-facing config — same shape on
+    both sides so the sim and real driver can be swapped behind the same
+    interface ... hopefuly.
     """
-    cmd = {
-        "cmd":          "render_image",
-        "pan_x":        config.pan_x,
-        "pan_y":        config.pan_y,
-        "zoom":         config.zoom,
-        "fractal_type": config.fractal_type,
-        "julia_c_real": config.julia_c_real,
-        "julia_c_imag": config.julia_c_imag,
-        "max_iter":     config.max_iter,
-        "preview":      config.preview,
-    }
-    sim = _get_sim()
 
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[
-        tuple[float, int, int, bytes] | BaseException | None
-    ] = asyncio.Queue()
-    started = time.perf_counter()
-
-    def stream_frames() -> None:
-        try:
-            for msg_type, chunk_id, payload in sim.request_stream(
-                cmd,
-                CHUNKS_PER_IMAGE,
-            ):
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    (elapsed_ms, msg_type, chunk_id, payload),
-                )
-        except BaseException as exc:
-            loop.call_soon_threadsafe(queue.put_nowait, exc)
-        finally:
-            loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    threading.Thread(target=stream_frames, daemon=True).start()
-
-    while True:
-        item = await queue.get()
-        if item is None:
-            break
-        if isinstance(item, BaseException):
-            raise item
-
-        elapsed_ms, msg_type, chunk_id, payload = item
-        if msg_type == _MSG_ERROR:
-            raise SimError(payload.decode("utf-8", errors="replace"))
-        if msg_type != _MSG_CHUNK:
-            raise SimError(f"expected chunk, got {msg_type:#x}")
-        if len(payload) != CHUNK_BYTES:
-            raise SimError(f"expected {CHUNK_BYTES} bytes, got {len(payload)}")
-        yield chunk_id, payload, elapsed_ms
+    pan_x: float
+    pan_y: float
+    zoom: int
+    fractal_type: str         # "mandelbrot" | "julia" | "burning_ship"
+    julia_c_real: float = 0.0
+    julia_c_imag: float = 0.0
 
 
-def ping() -> None:
-    """Verify the sim is alive. Raises SimError if not."""
-    sim = _get_sim()
-    msg_type, _, _ = sim.request({"cmd": "ping"})
-    if msg_type != _MSG_PONG:
-        raise SimError(f"expected pong, got {msg_type:#x}")
+
+### Return the (col_px, row_px) of the tile's top-left in the full image.
+def _tile_origin_pixels(tile_id: int) -> tuple[int, int]:
+    
+    col = tile_id % TILES_PER_SIDE
+    row = tile_id // TILES_PER_SIDE
+    return col * TILE_PIXELS, row * TILE_PIXELS
+
+
+
+### Build the 256x256 array of complex coordinates this tile covers.
+def _tile_complex_grid(config: RenderConfig, tile_id: int) -> np.ndarray:
+    
+    window = WINDOW_AT_ZOOM_0 / (2 ** config.zoom)
+    pixel_size = window / IMAGE_PIXELS
+
+    # Top-left of the tile in pixels relative to the image centre.
+    col_origin_px, row_origin_px = _tile_origin_pixels(tile_id)
+    centre_offset = IMAGE_PIXELS / 2
+
+    xs = (np.arange(TILE_PIXELS) + col_origin_px - centre_offset) * pixel_size + config.pan_x
+    ys = (np.arange(TILE_PIXELS) + row_origin_px - centre_offset) * pixel_size + config.pan_y
+
+    # meshgrid with xs across columns, ys down rows
+    X, Y = np.meshgrid(xs, ys)
+    return X + 1j * Y
+
+
+
+
+### Run the escape-time loop and return iteration counts quantised to 0..15.
+def _iterate(z0: np.ndarray, c: np.ndarray, fractal_type: str) -> np.ndarray:
+
+    z = z0.copy()
+    iters = np.zeros(z.shape, dtype=np.uint8)
+    escaped = np.zeros(z.shape, dtype=bool)
+
+    # Escaped points keep getting squared until the loop ends - goes inf - this is ok
+    with np.errstate(over="ignore", invalid="ignore"):
+        for i in range(PALETTE_BANDS):
+            if fractal_type == "burning_ship":
+                z = (np.abs(z.real) + 1j * np.abs(z.imag)) ** 2 + c
+            else:
+                z = z * z + c
+            newly_escaped = (~escaped) & (np.abs(z) > 2.0)
+            iters[newly_escaped] = i
+            escaped |= newly_escaped
+
+    # Points that never escaped get the max-band value
+    iters[~escaped] = PALETTE_BANDS - 1
+    return iters
+
+
+
+
+### Pack a (H, W) array of 4-bit values into bytes, two pixels per byte.
+### Low nibble = even column, high nibble = odd column. Matches possible wire-format spec.
+def _nibble_pack(indices: np.ndarray) -> bytes:
+   
+    flat = indices.reshape(-1)
+    low = flat[0::2]
+    high = flat[1::2]
+    packed = (high << 4) | low
+    return packed.astype(np.uint8).tobytes()
+
+
+
+
+### Return one tile's worth of nibble-packed pixel data.
+def render_tile(config: RenderConfig, tile_id: int) -> bytes:
+    if not 0 <= tile_id <= 15:
+        raise ValueError(f"tile_id must be 0..15, got {tile_id}")
+
+    grid = _tile_complex_grid(config, tile_id)
+
+    if config.fractal_type == "julia":
+        c_const = complex(config.julia_c_real, config.julia_c_imag)
+        z0 = grid
+        c = np.full_like(grid, c_const)
+    else:
+        # Mandelbrot and burning_ship: z starts at zero, c is the pixel coord
+        z0 = np.zeros_like(grid)
+        c = grid
+
+    indices = _iterate(z0, c, config.fractal_type)
+    return _nibble_pack(indices)
+    max_iter: int = 256
