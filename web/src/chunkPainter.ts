@@ -27,6 +27,7 @@ export class ChunkPainter {
   private stagingCtx: CanvasRenderingContext2D
   private chunksGot = new Set<number>()
   private currentSeq = -1
+  private currentBundleSize = CHUNKS_PER_FRAME
   /** Called when a full frame has been swapped into the visible canvas. */
   onFrameComplete: ((seq: number) => void) | null = null
 
@@ -48,10 +49,19 @@ export class ChunkPainter {
    * Paint an already-decoded bitmap (produced by the worker) into the
    * staging canvas at the chunk's grid position. Closes the bitmap
    * regardless of whether we drew it (so the GPU memory is released).
+   *
+   * `bundleSize` is the number of chunks the server sent for this
+   * frame_seq. Usually 16 (full frame), but with the dirty-chunk
+   * optimisation it can be 1..16 — chunks whose bytes are identical to
+   * the previous frame are omitted. The painter swaps staging→display
+   * once `bundleSize` chunks have landed; the unchanged regions on
+   * staging are already correct because staging is never wiped between
+   * frames, so the previous swap's pixels carry over.
    */
   paintBitmap(
     frameSeq: number,
     chunkId: number,
+    bundleSize: number,
     bitmap: ImageBitmap,
   ): void {
     if (this.currentSeq >= 0 && isOlderSeq(frameSeq, this.currentSeq)) {
@@ -61,6 +71,7 @@ export class ChunkPainter {
 
     if (frameSeq !== this.currentSeq) {
       this.currentSeq = frameSeq
+      this.currentBundleSize = bundleSize
       this.chunksGot.clear()
     }
 
@@ -71,7 +82,7 @@ export class ChunkPainter {
     bitmap.close()
 
     this.chunksGot.add(chunkId)
-    if (this.chunksGot.size === CHUNKS_PER_FRAME) {
+    if (this.chunksGot.size === this.currentBundleSize) {
       this.displayCtx.drawImage(this.staging, 0, 0)
       this.chunksGot.clear()
       this.onFrameComplete?.(frameSeq)

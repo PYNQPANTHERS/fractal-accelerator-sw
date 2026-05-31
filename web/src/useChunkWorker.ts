@@ -5,7 +5,7 @@
  *
  * The main thread's job per chunk is now:
  *   payload.buffer  → worker.postMessage(..., [transfer])  (~0 ms)
- *   on bitmap reply → painter.paintBitmap(seq, id, bitmap) (~0.05 ms)
+ *   on bitmap reply → painter.paintBitmap(seq, id, bundleSize, bitmap) (~0.05 ms)
  *
  * Everything between — the nibble unpack and the createImageBitmap
  * decode — happens off the main thread.
@@ -53,7 +53,7 @@ export function useChunkWorker(
         msg.bitmap.close()
         return
       }
-      painter.paintBitmap(msg.frameSeq, msg.chunkId, msg.bitmap)
+      painter.paintBitmap(msg.frameSeq, msg.chunkId, msg.bundleSize, msg.bitmap)
     }
 
     return () => {
@@ -80,6 +80,7 @@ export function useChunkWorker(
             panel: chunk.panel,
             chunkId: chunk.chunkId,
             frameSeq: chunk.frameSeq,
+            bundleSize: chunk.bundleSize,
             payload: copy,
           },
           [copy],

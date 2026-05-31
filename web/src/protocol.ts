@@ -53,6 +53,15 @@ export interface ChunkFrame {
   height: number
   pixelFormat: number
   payload: Uint8Array
+  /**
+   * Number of chunks in the wire message this ChunkFrame came from.
+   * For MSG_CHUNK this is always 1. For MSG_CHUNK_BUNDLE it can be
+   * 0..16: the server omits chunks whose contents are byte-identical
+   * to the previous frame (dirty-chunk optimisation), so the painter
+   * should treat this bundle as "complete" once `bundleSize` chunks
+   * have landed, not after the full 16-chunk grid.
+   */
+  bundleSize: number
 }
 
 /**
@@ -87,6 +96,7 @@ export function parseMessage(buf: ArrayBuffer): ChunkFrame[] {
       height,
       pixelFormat,
       payload: new Uint8Array(buf, HEADER_BYTES, payloadBytes),
+      bundleSize: 1,
     }]
   }
   if (msgType === MSG_CHUNK_BUNDLE) {
@@ -110,6 +120,7 @@ export function parseMessage(buf: ArrayBuffer): ChunkFrame[] {
         height,
         pixelFormat,
         payload: new Uint8Array(buf, pos + 1, payloadBytes),
+        bundleSize: chunkCount,
       }
       pos += recordSize
     }

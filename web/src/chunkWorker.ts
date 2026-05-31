@@ -24,6 +24,7 @@ type ChunkMsg = {
   panel: number              // PanelId (kept opaque here)
   chunkId: number
   frameSeq: number
+  bundleSize: number         // chunks this frame_seq carries on the wire
   payload: ArrayBuffer       // transferred from main
 }
 type WorkerInbound = InitMsg | ChunkMsg
@@ -34,6 +35,7 @@ export type WorkerOutbound = {
   panel: number
   chunkId: number
   frameSeq: number
+  bundleSize: number
   bitmap: ImageBitmap
 }
 
@@ -81,6 +83,7 @@ self.addEventListener('message', async (ev: MessageEvent<WorkerInbound>) => {
       panel: msg.panel,
       chunkId: msg.chunkId,
       frameSeq: msg.frameSeq,
+      bundleSize: msg.bundleSize,
       bitmap,
     }
     ;(self as unknown as Worker).postMessage(out, [bitmap])

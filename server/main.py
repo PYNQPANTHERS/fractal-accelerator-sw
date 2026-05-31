@@ -39,6 +39,47 @@ from server.protocol import (
 )
 from server.scheduler import Scheduler
 
+
+class DirtyChunkCache:
+    """Per-connection: remember each chunk we last sent, drop unchanged repeats.
+
+    A chunk's contents are summarised by hash(bytes). Across frames, a chunk
+    whose hash matches its predecessor is omitted from the next bundle and
+    the client keeps its previous texture in place.
+
+    Wins are real but narrow: identical re-renders (duplicate set_view,
+    debounced inputs, no-op Julia coupling), solid in-set chunks at deep
+    zoom, and idle Live Evolution frames. A pan shifts every pixel, so the
+    cache mostly misses on active drag — that's expected.
+    """
+
+    def __init__(self) -> None:
+        self._last: dict[int, dict[int, int]] = {}
+
+    def filter(
+        self,
+        panel_id: int,
+        chunks: list[tuple[int, bytes]],
+    ) -> list[tuple[int, bytes]]:
+        prev = self._last.setdefault(panel_id, {})
+        out: list[tuple[int, bytes]] = []
+        for chunk_id, payload in chunks:
+            h = hash(payload)
+            if prev.get(chunk_id) == h:
+                continue
+            prev[chunk_id] = h
+            out.append((chunk_id, payload))
+        return out
+
+    def invalidate(self, panel_id: int) -> None:
+        """Drop the panel's cache so the next frame sends all chunks.
+
+        Use when the *meaning* of a panel changes (fractal type, zoom level,
+        preview/full quality switch). Without this, the client could end up
+        with a frame where some chunks are old-quality and some are new.
+        """
+        self._last.pop(panel_id, None)
+
 log = logging.getLogger("server")
 
 HOST = os.environ.get("SERVER_HOST", "localhost")
@@ -109,6 +150,7 @@ async def _render_and_stream(
     ws: WebSocketServerProtocol,
     scheduler: Scheduler,
     telemetry_enabled: Callable[[], bool],
+    dirty_cache: DirtyChunkCache,
 ) -> None:
     """Pick the next job, render all 16 chunks, and stream a bundled frame.
 
@@ -186,10 +228,14 @@ async def _render_and_stream(
             },
         )
     if chunks:
+        dirty = dirty_cache.filter(panel_id, chunks)
+        # Always send the bundle, even when zero chunks are dirty: this
+        # advances the client's per-panel latest_seq so future stale-frame
+        # checks behave correctly. Empty bundles are ~16 bytes.
         await ws.send(pack_chunk_bundle(
             panel_id=panel_id,
             frame_seq=job.frame_seq,
-            chunks=chunks,
+            chunks=dirty,
         ))
         await _send_telemetry(
             ws,
@@ -199,7 +245,8 @@ async def _render_and_stream(
                 "panel_id": panel_id,
                 "frame_seq": job.frame_seq,
                 "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
-                "chunk_count": len(chunks),
+                "chunk_count": len(dirty),
+                "chunks_skipped": len(chunks) - len(dirty),
                 "quality": _quality_label(config),
                 "backend": "sim",
             },
@@ -211,10 +258,28 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
     log.info("browser connected from %s", ws.remote_address)
     scheduler = Scheduler()
     telemetry_enabled = False
+    dirty_cache = DirtyChunkCache()
 
     # Fix 3 — Per-panel state: track the last known config for each panel
     # so we can preserve Julia zoom/pan across Mandelbrot panning.
     panel_state: dict[int, RenderConfig] = {}
+
+    def _config_invalidates_cache(prev: RenderConfig | None,
+                                  curr: RenderConfig) -> bool:
+        # A pure pan keeps the cache usable for unchanged chunks (rare on
+        # the main panels — pan shifts every pixel — but common for the
+        # crosshair-only Julia coupling case and for solid-set tiles).
+        # Anything that changes per-pixel colour at the same pan must
+        # repaint everything, since a stale cached chunk would show the
+        # old fractal alongside the new one.
+        if prev is None:
+            return True
+        return (prev.zoom         != curr.zoom
+                or prev.fractal_type != curr.fractal_type
+                or prev.julia_c_real != curr.julia_c_real
+                or prev.julia_c_imag != curr.julia_c_imag
+                or prev.max_iter     != curr.max_iter
+                or prev.preview      != curr.preview)
 
     # Seed main panel state so Julia coupling can preserve zoom/pan.
     _default_mandelbrot = RenderConfig(
@@ -238,6 +303,8 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
             if isinstance(msg, SetViewMessage):
                 prev = panel_state.get(msg.panel_id)
                 cfg = _config_for_mode(set_view_to_config(msg), scheduler.mode)
+                if _config_invalidates_cache(prev, cfg):
+                    dirty_cache.invalidate(msg.panel_id)
                 panel_state[msg.panel_id] = cfg
                 scheduler.push(
                     msg.panel_id,
@@ -273,6 +340,8 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                             # live coupling fast during interaction.
                             preview      = cfg.preview,
                         )
+                        if _config_invalidates_cache(existing_julia, julia_cfg):
+                            dirty_cache.invalidate(PANEL_JULIA_MAIN)
                         panel_state[PANEL_JULIA_MAIN] = julia_cfg
                         scheduler.push(PANEL_JULIA_MAIN, julia_cfg, msg.frame_seq,
                                        mark_active=False)
@@ -285,8 +354,13 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)
                 if msg.mode == "live_evolution":
+                    # Forcing preview→full on pending mains can change
+                    # rendered pixels; safer to repaint fully next frame.
                     for panel_id, config in list(panel_state.items()):
-                        panel_state[panel_id] = _config_for_mode(config, msg.mode)
+                        new = _config_for_mode(config, msg.mode)
+                        if _config_invalidates_cache(config, new):
+                            dirty_cache.invalidate(panel_id)
+                        panel_state[panel_id] = new
                 await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
                 log.info("mode → %s", msg.mode)
 
@@ -295,6 +369,10 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                     PANEL_MANDELBROT_MINIMAP,
                     PANEL_JULIA_MINIMAP,
                 )
+                # If minimaps are re-enabled later their first frame should
+                # paint in full, not partial-against-stale-cache.
+                dirty_cache.invalidate(PANEL_MANDELBROT_MINIMAP)
+                dirty_cache.invalidate(PANEL_JULIA_MINIMAP)
                 await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
                 log.info("minimap cache → %s", "on" if msg.enabled else "off")
 
@@ -312,6 +390,7 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                 ws,
                 scheduler,
                 lambda: telemetry_enabled,
+                dirty_cache,
             )
 
     try:

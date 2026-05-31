@@ -80,9 +80,22 @@ export function useRenderSocket(
           console.warn('[ws] bad frame:', err)
           return
         }
-        // A bundle is one frame_seq for one panel by construction, so
-        // the staleness check on the first chunk applies to all of them.
-        if (frames.length === 0) return
+        // An empty bundle means the server rendered the frame but every
+        // chunk was byte-identical to the previous send (dirty-chunk
+        // skip). The canvas is already correct; we just need to advance
+        // the stale-seq tracker so older chunks for this panel can't
+        // clobber it. The header carries panel/frame_seq even when
+        // there are no chunk records — re-parse them from the raw bytes.
+        if (frames.length === 0) {
+          const view = new DataView(ev.data as ArrayBuffer)
+          const panel = view.getUint8(1) as Panel
+          const frameSeq = view.getUint16(3, true)
+          const seen = latestSeqRef.current[panel]
+          if (seen < 0 || !isOlder(frameSeq, seen)) {
+            latestSeqRef.current[panel] = frameSeq
+          }
+          return
+        }
         const first = frames[0]
         const seen = latestSeqRef.current[first.panel]
         if (seen >= 0 && isOlder(first.frameSeq, seen)) {
