@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 import json
 import logging
 import os
@@ -54,6 +55,12 @@ _TELEMETRY_TILE_ROWS = 4
 
 def _quality_label(config: RenderConfig) -> str:
     return "preview" if config.preview else "full"
+
+
+def _config_for_mode(config: RenderConfig, mode: str) -> RenderConfig:
+    if mode == "live_evolution" and config.preview:
+        return replace(config, preview=False)
+    return config
 
 
 def _mandelbrot_minimap_config() -> RenderConfig:
@@ -178,6 +185,7 @@ async def _render_and_stream(
         return
 
     panel_id, job = result
+    config = _config_for_mode(job.config, scheduler.mode)
     log.info("rendering panel=%d frame_seq=%d", panel_id, job.frame_seq)
     started = time.perf_counter()
     await _send_telemetry(
@@ -187,8 +195,8 @@ async def _render_and_stream(
             "event": "render_started",
             "panel_id": panel_id,
             "frame_seq": job.frame_seq,
-            "quality": _quality_label(job.config),
-            "max_iter": job.config.max_iter,
+            "quality": _quality_label(config),
+            "max_iter": config.max_iter,
             "backend": "sim",
             "tile_cols": _TELEMETRY_TILE_COLS,
             "tile_rows": _TELEMETRY_TILE_ROWS,
@@ -198,7 +206,7 @@ async def _render_and_stream(
     # Collect all tiles for this render, then send them in one binary
     # WS frame. Avoids per-tile send overhead (~0.2 ms × N tiles).
     tiles: list[tuple[int, bytes]] = []
-    async for tile_id, tile_bytes, tile_elapsed_ms in render_image(job.config):
+    async for tile_id, tile_bytes, tile_elapsed_ms in render_image(config):
         tiles.append((tile_id, tile_bytes))
         await _send_telemetry(
             ws,
@@ -209,7 +217,7 @@ async def _render_and_stream(
                 "frame_seq": job.frame_seq,
                 "tile_id": tile_id,
                 "elapsed_ms": round(tile_elapsed_ms, 3),
-                "quality": _quality_label(job.config),
+                "quality": _quality_label(config),
                 "backend": "sim",
                 "stage": "available",
                 "tile_cols": _TELEMETRY_TILE_COLS,
@@ -232,7 +240,7 @@ async def _render_and_stream(
                 "frame_seq": job.frame_seq,
                 "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
                 "tile_count": len(tiles),
-                "quality": _quality_label(job.config),
+                "quality": _quality_label(config),
                 "backend": "sim",
             },
         )
@@ -283,7 +291,7 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
 
             if isinstance(msg, SetViewMessage):
                 prev = panel_state.get(msg.panel_id)
-                cfg = set_view_to_config(msg)
+                cfg = _config_for_mode(set_view_to_config(msg), scheduler.mode)
                 panel_state[msg.panel_id] = cfg
                 scheduler.push(
                     msg.panel_id,
@@ -375,6 +383,9 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
 
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)
+                if msg.mode == "live_evolution":
+                    for panel_id, config in list(panel_state.items()):
+                        panel_state[panel_id] = _config_for_mode(config, msg.mode)
                 await _send_scheduler_snapshot(ws, scheduler, telemetry_enabled)
                 log.info("mode → %s", msg.mode)
 

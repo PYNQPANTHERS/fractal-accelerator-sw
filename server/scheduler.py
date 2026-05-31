@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any, Optional
 
 from sim.config import RenderConfig
@@ -62,6 +63,7 @@ class Scheduler:
         must not steal "active panel" status from the panel the user is
         actually interacting with.
         """
+        config = self._config_for_mode(config)
         self._pending[panel_id] = PendingJob(config=config, frame_seq=frame_seq)
         if mark_active and panel_id in (PANEL_MANDELBROT_MAIN, PANEL_JULIA_MAIN):
             self._active_panel = panel_id
@@ -74,6 +76,8 @@ class Scheduler:
     def set_mode(self, mode: str) -> None:
         if mode in ("performance", "live_evolution"):
             self.mode = mode
+            if self.mode == "live_evolution":
+                self._force_pending_full_quality()
             # A mode switch can make already-pending work eligible
             # immediately, so wake the render loop even without a new view.
             self.job_available.set()
@@ -137,6 +141,20 @@ class Scheduler:
             return None
         return self._pick_performance() if self.mode == "performance" \
             else self._pick_live_evolution()
+
+    def _config_for_mode(self, config: RenderConfig) -> RenderConfig:
+        if self.mode == "live_evolution" and config.preview:
+            return replace(config, preview=False)
+        return config
+
+    def _force_pending_full_quality(self) -> None:
+        for panel_id, job in list(self._pending.items()):
+            config = self._config_for_mode(job.config)
+            if config is not job.config:
+                self._pending[panel_id] = PendingJob(
+                    config=config,
+                    frame_seq=job.frame_seq,
+                )
 
     def _pick_performance(self) -> Optional[int]:
         other_main = (PANEL_JULIA_MAIN

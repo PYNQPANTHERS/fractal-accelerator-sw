@@ -5,13 +5,10 @@
  *   fps   — completed renders per second (notifyFrameApplied calls)
  *   m/j   — per-panel FPS plus latency in ms
  *   lat   — wall-clock latency: request → final tile landed (EWMA, ms)
- *   move  — pointermove events per second during drag
- *   frame — browser requestAnimationFrame ticks (compositor health)
  *
  * fps and lat tell the sim/server/wire story together: low fps with
  * low lat means we're idle, low fps with high lat means we're CPU-
- * bound. move and frame together tell us if the compositor is keeping
- * up with the user's input, regardless of how slow the sim is.
+ * bound.
  *
  * Counters are always running (negligible cost). The overlay component
  * is only mounted when the debug flag is on.
@@ -33,8 +30,6 @@ export interface Rates {
   mandelbrotLatMs: number
   juliaFps: number
   juliaLatMs: number
-  move: number
-  frame: number
 }
 
 export interface FpsHandle {
@@ -42,13 +37,10 @@ export interface FpsHandle {
   noteRender: (seq: number, panel: Panel) => void
   /** Mark a render *complete* — close the latency timer for that seq. */
   notePaint: (seq: number, panel: Panel) => void
-  noteMove: () => void
 }
 
 export function useFpsCounters(): { handle: FpsHandle; rates: Rates } {
   const paintTimes = useRef<PaintSample[]>([])
-  const moveTimes = useRef<number[]>([])
-  const frameTimes = useRef<number[]>([])
   // panel:seq -> request timestamp. notePaint(panel, seq) closes the
   // entry and contributes its duration to the smoothed latency.
   const renderStartBySeq = useRef<Map<string, number>>(new Map())
@@ -62,8 +54,6 @@ export function useFpsCounters(): { handle: FpsHandle; rates: Rates } {
     mandelbrotLatMs: 0,
     juliaFps: 0,
     juliaLatMs: 0,
-    move: 0,
-    frame: 0,
   })
 
   const noteRender = useCallback((seq: number, panel: Panel) => {
@@ -98,13 +88,9 @@ export function useFpsCounters(): { handle: FpsHandle; rates: Rates } {
       }
     }
   }, [])
-  const noteMove = useCallback(() => {
-    moveTimes.current.push(performance.now())
-  }, [])
-
   const handle = useMemo<FpsHandle>(
-    () => ({ noteRender, notePaint, noteMove }),
-    [noteRender, notePaint, noteMove],
+    () => ({ noteRender, notePaint }),
+    [noteRender, notePaint],
   )
 
   useEffect(() => {
@@ -112,7 +98,6 @@ export function useFpsCounters(): { handle: FpsHandle; rates: Rates } {
     let lastSample = 0
 
     const tick = (now: number) => {
-      frameTimes.current.push(now)
       if (now - lastSample > 250) {
         lastSample = now
         const cutoff = now - WINDOW_MS
@@ -122,8 +107,6 @@ export function useFpsCounters(): { handle: FpsHandle; rates: Rates } {
           return i > 0 ? arr.slice(i) : arr
         }
         paintTimes.current = prune(paintTimes.current, (p) => p.time)
-        moveTimes.current = prune(moveTimes.current, (t) => t)
-        frameTimes.current = prune(frameTimes.current, (t) => t)
         const mandelbrotFps = paintTimes.current.filter(
           (p) => p.panel === Panel.MandelbrotMain,
         ).length
@@ -137,8 +120,6 @@ export function useFpsCounters(): { handle: FpsHandle; rates: Rates } {
           mandelbrotLatMs: Math.round(mandelbrotLatEwma.current),
           juliaFps,
           juliaLatMs: Math.round(juliaLatEwma.current),
-          move: moveTimes.current.length,
-          frame: frameTimes.current.length,
         })
       }
       rafId = requestAnimationFrame(tick)
@@ -158,8 +139,6 @@ export function FpsOverlay({ rates }: { rates: Rates }) {
       <Row label="m" value={`${rates.mandelbrotFps} / ${rates.mandelbrotLatMs} ms`} />
       <Row label="j" value={`${rates.juliaFps} / ${rates.juliaLatMs} ms`} />
       <Row label="lat" value={`${rates.latMs} ms`} />
-      <Row label="move" value={rates.move} />
-      <Row label="frame" value={rates.frame} />
     </div>
   )
 }
