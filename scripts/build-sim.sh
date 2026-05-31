@@ -2,7 +2,7 @@
 # Build the C++ simulator backend.
 #
 # Output: sim/cpp/build/fractal_sim — the binary that sim/renderer.py
-# spawns to produce tiles. Re-run after touching anything under sim/cpp/src.
+# spawns to produce chunks. Re-run after touching anything under sim/cpp/src.
 
 set -euo pipefail
 

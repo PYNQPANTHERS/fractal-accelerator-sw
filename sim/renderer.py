@@ -24,20 +24,20 @@ from pathlib import Path
 from sim.config import RenderConfig
 
 
-TILE_PIXELS = 256
-TILE_BYTES  = TILE_PIXELS * TILE_PIXELS // 2   # 32768
-# 4x4 grid of 256-px tiles: 1024-px rendered image, no pre-rendered
+CHUNK_PIXELS = 256
+CHUNK_BYTES  = CHUNK_PIXELS * CHUNK_PIXELS // 2   # 32768
+# 4x4 grid of 256-px browser chunks: 1024-px rendered image, no pre-rendered
 # pan margin in the current fast path.
-TILES_PER_IMAGE = 16
+CHUNKS_PER_IMAGE = 16
 
 # Frame format from sim/cpp/src/response.hpp:
 #   byte 0    : message_type
-#   byte 1    : tile_id
+#   byte 1    : chunk_id
 #   bytes 2-5 : payload length, little-endian uint32
 _HEADER_FMT  = "<BBI"
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)   # 6
 
-_MSG_TILE  = 0x01
+_MSG_CHUNK = 0x01
 _MSG_PONG  = 0x02
 _MSG_ERROR = 0xFF
 
@@ -81,13 +81,13 @@ class _Sim:
         header = self._proc.stdout.read(_HEADER_SIZE)
         if len(header) < _HEADER_SIZE:
             raise SimError("sim subprocess closed stdout before a complete header")
-        msg_type, tile_id, length = struct.unpack(_HEADER_FMT, header)
+        msg_type, chunk_id, length = struct.unpack(_HEADER_FMT, header)
         payload = self._proc.stdout.read(length) if length > 0 else b""
         if len(payload) < length:
             raise SimError(
                 f"sim stdout closed mid-payload ({len(payload)}/{length} bytes)"
             )
-        return msg_type, tile_id, payload
+        return msg_type, chunk_id, payload
 
     def request(self, command: dict) -> tuple[int, int, bytes]:
         """Send one command, read one response frame."""
@@ -130,15 +130,15 @@ def _get_sim() -> _Sim:
         return _sim_instance
 
 
-def render_tile(config: RenderConfig, tile_id: int) -> bytes:
-    """Render one tile. Returns 32768 bytes of nibble-packed 4-bit indices."""
-    if not 0 <= tile_id <= 15:
-        raise ValueError(f"tile_id must be 0..15, got {tile_id}")
+def render_chunk(config: RenderConfig, chunk_id: int) -> bytes:
+    """Render one chunk. Returns 32768 bytes of nibble-packed 4-bit indices."""
+    if not 0 <= chunk_id <= 15:
+        raise ValueError(f"chunk_id must be 0..15, got {chunk_id}")
 
     sim = _get_sim()
     msg_type, returned_id, payload = sim.request({
-        "cmd":          "render_tile",
-        "tile_id":      tile_id,
+        "cmd":          "render_chunk",
+        "chunk_id":     chunk_id,
         "pan_x":        config.pan_x,
         "pan_y":        config.pan_y,
         "zoom":         config.zoom,
@@ -149,23 +149,23 @@ def render_tile(config: RenderConfig, tile_id: int) -> bytes:
     })
     if msg_type == _MSG_ERROR:
         raise SimError(payload.decode("utf-8", errors="replace"))
-    if msg_type != _MSG_TILE:
-        raise SimError(f"expected tile, got {msg_type:#x}")
-    if returned_id != tile_id:
-        raise SimError(f"tile_id mismatch: sent {tile_id}, got {returned_id}")
-    if len(payload) != TILE_BYTES:
-        raise SimError(f"expected {TILE_BYTES} bytes, got {len(payload)}")
+    if msg_type != _MSG_CHUNK:
+        raise SimError(f"expected chunk, got {msg_type:#x}")
+    if returned_id != chunk_id:
+        raise SimError(f"chunk_id mismatch: sent {chunk_id}, got {returned_id}")
+    if len(payload) != CHUNK_BYTES:
+        raise SimError(f"expected {CHUNK_BYTES} bytes, got {len(payload)}")
     return payload
 
 
 async def render_image(config: RenderConfig):
-    """Render all 16 tiles, yielding (tile_id, bytes, elapsed_ms) per tile.
+    """Render all 16 chunks, yielding (chunk_id, bytes, elapsed_ms) per chunk.
 
     One round trip to the C++ binary (render_image command). The binary
-    computes all 16 tiles in parallel threads and streams each frame back
+    computes all 16 browser chunks in parallel threads and streams each frame back
     as its worker completes. The elapsed_ms value is measured at the Python
-    driver boundary, which mirrors the future Pynq path: tile-done IRQ or
-    status event received by PS, then forwarded to the websocket layer.
+    driver boundary, which mirrors the future Pynq path: chunk-ready status
+    received by PS, then forwarded to the websocket layer.
     """
     cmd = {
         "cmd":          "render_image",
@@ -188,14 +188,14 @@ async def render_image(config: RenderConfig):
 
     def stream_frames() -> None:
         try:
-            for msg_type, tile_id, payload in sim.request_stream(
+            for msg_type, chunk_id, payload in sim.request_stream(
                 cmd,
-                TILES_PER_IMAGE,
+                CHUNKS_PER_IMAGE,
             ):
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 loop.call_soon_threadsafe(
                     queue.put_nowait,
-                    (elapsed_ms, msg_type, tile_id, payload),
+                    (elapsed_ms, msg_type, chunk_id, payload),
                 )
         except BaseException as exc:
             loop.call_soon_threadsafe(queue.put_nowait, exc)
@@ -211,14 +211,14 @@ async def render_image(config: RenderConfig):
         if isinstance(item, BaseException):
             raise item
 
-        elapsed_ms, msg_type, tile_id, payload = item
+        elapsed_ms, msg_type, chunk_id, payload = item
         if msg_type == _MSG_ERROR:
             raise SimError(payload.decode("utf-8", errors="replace"))
-        if msg_type != _MSG_TILE:
-            raise SimError(f"expected tile, got {msg_type:#x}")
-        if len(payload) != TILE_BYTES:
-            raise SimError(f"expected {TILE_BYTES} bytes, got {len(payload)}")
-        yield tile_id, payload, elapsed_ms
+        if msg_type != _MSG_CHUNK:
+            raise SimError(f"expected chunk, got {msg_type:#x}")
+        if len(payload) != CHUNK_BYTES:
+            raise SimError(f"expected {CHUNK_BYTES} bytes, got {len(payload)}")
+        yield chunk_id, payload, elapsed_ms
 
 
 def ping() -> None:

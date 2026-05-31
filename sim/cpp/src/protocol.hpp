@@ -14,8 +14,8 @@ namespace fractal_sim {
 // One command kind per supported request. New variants get added here as
 // commands are introduced.
 
-struct RenderTile {
-    int tile_id;
+struct RenderChunk {
+    int chunk_id;
     double pan_x;
     double pan_y;
     int zoom;
@@ -25,12 +25,12 @@ struct RenderTile {
     int max_iter;
 };
 
-// Render the full image. Tile frames are streamed in completion order,
-// mirroring how the real PL can report tile_id + tile_done as its cores
-// finish.
+// Render the full image. Chunk frames are streamed in completion order,
+// mirroring the PS-side unit that will be built from finer PL microtile
+// completions.
 //
 // `preview` switches the kernel to a subsampled path: compute one pixel
-// per 2x2 block and broadcast. ~4x faster per tile, slightly fuzzy
+// per 2x2 block and broadcast. ~4x faster per chunk, slightly fuzzy
 // output. Performance mode uses this during active pan/zoom for
 // smoothness and re-requests `preview=false` on settle for crisp final.
 struct RenderImage {
@@ -50,7 +50,7 @@ struct ParseError {
     std::string message;
 };
 
-using Command = std::variant<RenderTile, RenderImage, Ping, ParseError>;
+using Command = std::variant<RenderChunk, RenderImage, Ping, ParseError>;
 
 // Parse one JSON line into a Command. Returns ParseError on any failure
 // (invalid JSON, missing fields, unknown cmd, wrong field types).

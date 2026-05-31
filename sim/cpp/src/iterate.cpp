@@ -6,8 +6,8 @@
 namespace fractal_sim {
 
 // Write a 4-bit band into the nibble-packed output buffer at (px, py).
-inline void write_pixel(TileBuffer& out, int px, int py, uint8_t band) {
-    const int linear_pixel = py * TILE_PIXELS + px;
+inline void write_pixel(ChunkBuffer& out, int px, int py, uint8_t band) {
+    const int linear_pixel = py * CHUNK_PIXELS + px;
     const std::size_t byte_idx = linear_pixel / 2;
     if (px % 2 == 0) {
         // Clear the low nibble before writing (= becomes |=) so that
@@ -23,8 +23,8 @@ inline void write_pixel(TileBuffer& out, int px, int py, uint8_t band) {
     }
 }
 
-void compute_tile(TileBuffer& out,
-                  int tile_id,
+void compute_chunk(ChunkBuffer& out,
+                  int chunk_id,
                   double pan_x,
                   double pan_y,
                   int zoom,
@@ -46,19 +46,19 @@ void compute_tile(TileBuffer& out,
     const double pixel_size = window / VISIBLE_PIXELS;
     const double centre_off = IMAGE_PIXELS / 2.0;
 
-    const int tile_col   = tile_id % TILES_PER_SIDE;
-    const int tile_row   = tile_id / TILES_PER_SIDE;
-    const int col_origin = tile_col * TILE_PIXELS;
-    const int row_origin = tile_row * TILE_PIXELS;
+    const int chunk_col   = chunk_id % CHUNKS_PER_SIDE;
+    const int chunk_row   = chunk_id / CHUNKS_PER_SIDE;
+    const int col_origin = chunk_col * CHUNK_PIXELS;
+    const int row_origin = chunk_row * CHUNK_PIXELS;
 
     // Stride: full quality = 1 pixel per cell; preview = 1 pixel per
     // 2x2 block, broadcast.
     const int stride = preview ? 2 : 1;
 
-    for (int py = 0; py < TILE_PIXELS; py += stride) {
+    for (int py = 0; py < CHUNK_PIXELS; py += stride) {
         const double y_complex = (row_origin + py - centre_off) * pixel_size + pan_y;
 
-        for (int px = 0; px < TILE_PIXELS; px += stride) {
+        for (int px = 0; px < CHUNK_PIXELS; px += stride) {
             const double x_complex = (col_origin + px - centre_off) * pixel_size + pan_x;
 
             double z_re, z_im, c_re, c_im;

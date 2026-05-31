@@ -4,7 +4,7 @@
  * Rolling stats over a 1-second window:
  *   fps   — completed renders per second (notifyFrameApplied calls)
  *   m/j   — per-panel FPS plus latency in ms
- *   lat   — wall-clock latency: request → final tile landed (EWMA, ms)
+ *   lat   — wall-clock latency: request → final chunk landed (EWMA, ms)
  *
  * fps and lat tell the sim/server/wire story together: low fps with
  * low lat means we're idle, low fps with high lat means we're CPU-

@@ -3,7 +3,7 @@
  *
  * Two full-bleed viewports (Mandelbrot | Julia) with optional cached
  * minimaps overlaid in the lower-left. Each viewport owns a 1024×1024
- * canvas driven by a TilePainter; incoming binary frames are routed to
+ * canvas driven by a ChunkPainter; incoming binary frames are routed to
  * the painter whose panel id matches.
  *
  * Interaction: drag to pan, wheel to step zoom by ±1 (matches the FPGA's
@@ -16,12 +16,12 @@ import { useRenderSocket } from './useRenderSocket'
 import {
   IMAGE_PX,
   Panel,
+  type ChunkFrame,
   type InteractionPhase,
   type Quality,
-  type TileFrame,
 } from './protocol'
-import { TilePainter } from './tilePainter'
-import { useTileWorker } from './useTileWorker'
+import { ChunkPainter } from './chunkPainter'
+import { useChunkWorker } from './useChunkWorker'
 import { useViewState, type ViewState } from './useViewState'
 import { DebugPanel, DEFAULT_DEBUG_FLAGS, type DebugFlags } from './DebugPanel'
 import { FpsOverlay, useFpsCounters } from './FpsOverlay'
@@ -62,8 +62,8 @@ export default function App() {
   const [debugFlags, setDebugFlags] = useState<DebugFlags>(DEFAULT_DEBUG_FLAGS)
   const { handle: fps, rates: fpsRates } = useFpsCounters()
   const workload = useWorkloadTelemetry()
-  const paintersRef = useRef<Partial<Record<Panel, TilePainter>>>({})
-  // Bumped on every set_view so server can drop stale tile frames.
+  const paintersRef = useRef<Partial<Record<Panel, ChunkPainter>>>({})
+  // Bumped on every set_view so server can drop stale chunk frames.
   const seqRef = useRef(0)
   // Julia tracks the c implied by the Mandelbrot centre.
   const juliaCRef = useRef(JULIA_C_INITIAL)
@@ -86,19 +86,19 @@ export default function App() {
     (panel: Panel) => paintersRef.current[panel],
     [],
   )
-  const tileWorker = useTileWorker(getPainter)
+  const chunkWorker = useChunkWorker(getPainter)
 
   // Hot path now does the absolute minimum on the main thread: hand
   // the payload to the worker as a transferable. Unpack + decode +
   // bitmap creation all happen off-thread.
-  const handleTile = useCallback(
-    (tile: TileFrame) => tileWorker.enqueue(tile),
-    [tileWorker],
+  const handleChunk = useCallback(
+    (chunk: ChunkFrame) => chunkWorker.enqueue(chunk),
+    [chunkWorker],
   )
 
   const { state, send } = useRenderSocket(
     WS_URL,
-    handleTile,
+    handleChunk,
     workload.handleTelemetry,
   )
   const sendRef = useRef(send)
@@ -438,7 +438,7 @@ function mergeRefs<T>(
 }
 
 function makeRegister(
-  paintersRef: React.MutableRefObject<Partial<Record<Panel, TilePainter>>>,
+  paintersRef: React.MutableRefObject<Partial<Record<Panel, ChunkPainter>>>,
   panel: Panel,
   onFrameComplete: ((seq: number) => void) | null = null,
   onReady: (() => void) | null = null,
@@ -455,7 +455,7 @@ function makeRegister(
       onReady?.()
       return
     }
-    const painter = new TilePainter(canvas)
+    const painter = new ChunkPainter(canvas)
     painter.onFrameComplete = onFrameComplete
     painter.clear()
     paintersRef.current[panel] = painter
@@ -550,7 +550,7 @@ function consumeFrameMeta(
 }
 
 function captureOverview(
-  paintersRef: React.MutableRefObject<Partial<Record<Panel, TilePainter>>>,
+  paintersRef: React.MutableRefObject<Partial<Record<Panel, ChunkPainter>>>,
   sourcePanel: Panel,
   minimapPanel: Panel,
   overviewRef: React.MutableRefObject<CachedOverview | null>,

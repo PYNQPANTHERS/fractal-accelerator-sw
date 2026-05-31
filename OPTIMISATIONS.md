@@ -17,10 +17,10 @@ Last updated: 2026-05-30.
   request a subsampled preview kernel from the same simulator. It is not a
   second simulator implementation.
 - **4 x 4 browser chunk grid**: 16 chunks per render, each 256 x 256, giving a
-  1024 x 1024 image. The FPGA path can report finer 16 x 16 RTL tile telemetry
+  1024 x 1024 image. The FPGA path can report finer 16 x 16 RTL microtile telemetry
   without changing this image protocol.
 - **No active prefetch margin**: 5x5, 6x6, and 7x7 margin experiments were
-  tried and rolled back because extra tile work lowered the frame ceiling and
+  tried and rolled back because extra chunk work lowered the frame ceiling and
   increased visible jitter.
 - **No active predictive prefetch**: the hook is still guarded in code, but it
   is disabled while `CANVAS_MARGIN_FRAC` is zero. With no rendered margin,
@@ -33,24 +33,24 @@ Last updated: 2026-05-30.
 
 ## C++ Simulator
 
-### Parallel Tile Rendering
+### Parallel Chunk Rendering
 
 - **Where**: `sim/cpp/src/main.cpp`
 - **What**: `render_image` launches one worker per browser chunk and streams
   chunk frames back to Python as workers complete.
-- **Why**: It mimics the hardware model: independent tile/sixteenth workers
+- **Why**: It mimics the hardware model: independent chunk/sixteenth workers
   complete in their own order, then the PS side serialises results.
-- **Status**: **Load-bearing**. It gives realistic tile-completion telemetry and
+- **Status**: **Load-bearing**. It gives realistic chunk-completion telemetry and
   keeps the simulator useful for frontend and scheduler work.
 
 ### Completion-Order Streaming
 
 - **Where**: `sim/cpp/src/main.cpp`, `sim/renderer.py`
-- **What**: Python yields `(tile_id, payload, elapsed_ms)` as each simulator
+- **What**: Python yields `(chunk_id, payload, elapsed_ms)` as each simulator
   chunk frame is received.
-- **Why**: The Workload Inspector can show real "tile completed at 3.2 ms"
-  style timings now, and the same interface maps cleanly to future PL
-  `tile_done` / transfer-complete events.
+- **Why**: The Workload Inspector can show real "chunk completed at 3.2 ms"
+  style timings now. Future FPGA runs can also feed finer `microtile_done` /
+  transfer-complete telemetry on the separate debug path.
 - **Status**: **Load-bearing for FPGA readiness**.
 
 ### Mariani-Silver Full-Quality Path
@@ -135,7 +135,7 @@ Last updated: 2026-05-30.
   canonical built-in overview; Julia caches the latest zoom=0 Julia frame and
   ignores zoomed Julia frames.
 - **Why**: Minimap imagery no longer competes for scheduler slots, sim time,
-  tile-worker decode, or WebSocket bandwidth. The cache is keyed so common
+  chunk-worker decode, or WebSocket bandwidth. The cache is keyed so common
   built-ins can reuse stable identities and future arbitrary equations can use
   expression hashes.
 - **Status**: **Keep**.
@@ -143,18 +143,18 @@ Last updated: 2026-05-30.
 ### Telemetry Only When Needed
 
 - **Where**: `server/main.py`, `web/src/WorkloadInspector.tsx`
-- **What**: `set_telemetry` turns scheduler/tile/render JSON events on only
+- **What**: `set_telemetry` turns scheduler/chunk/render JSON events on only
   while the floating Workload Inspector is open.
 - **Why**: The normal render path should not pay debug overhead.
 - **Status**: **Keep**.
 
-### PS Tile Streamer Aggregation
+### PS Chunk Streamer Aggregation
 
 - **Where**: future `driver/` FPGA path.
-- **What**: The PS Tile Streamer accumulates 16 x 16 RTL tile completions into
+- **What**: The PS Chunk Streamer accumulates 16 x 16 RTL microtile completions into
   256 x 256 chunk buffers, then flushes those chunks through the existing
   browser image protocol.
-- **Why**: The FPGA's natural completion unit is a 16 x 16 tile, while the
+- **Why**: The FPGA's natural completion unit is a 16 x 16 microtile, while the
   browser's efficient paint/transport unit is a 256 x 256 chunk. Keeping the PS
   as the explicit aggregation point preserves wire optimisations and lets the
   Workload Inspector show true hardware readiness through separate telemetry.
@@ -162,7 +162,7 @@ Last updated: 2026-05-30.
   for settled renders; consider short timeout flushes during interaction so a
   slow microtile does not stall visible progress.
 
-### Bundled Binary Tile Sends
+### Bundled Binary Chunk Sends
 
 - **Where**: `server/protocol.py`, `server/main.py`,
   `web/src/protocol.ts`
@@ -187,7 +187,7 @@ Last updated: 2026-05-30.
 
 - **Where**: `web/src/useViewState.ts`
 - **What**: During drag the canvas is moved with `transform: translate(...)`
-  immediately, without waiting for new tiles.
+  immediately, without waiting for new chunks.
 - **Why**: Pointer feedback stays responsive even when render latency is above a
   display frame.
 - **Status**: **Load-bearing**.
@@ -235,9 +235,9 @@ Last updated: 2026-05-30.
 - **Why**: Prevents late stale renders from painting over the current view.
 - **Status**: **Load-bearing**.
 
-### Worker-Based Tile Decode
+### Worker-Based Chunk Decode
 
-- **Where**: `web/src/tileWorker.ts`, `web/src/useTileWorker.ts`
+- **Where**: `web/src/chunkWorker.ts`, `web/src/useChunkWorker.ts`
 - **What**: Nibble unpacking, RGBA expansion, and `ImageBitmap` creation happen
   in a Web Worker.
 - **Why**: The main thread only blits ready bitmaps, which protects pan and
@@ -246,7 +246,7 @@ Last updated: 2026-05-30.
 
 ### Double-Buffered Painter
 
-- **Where**: `web/src/tilePainter.ts`
+- **Where**: `web/src/chunkPainter.ts`
 - **What**: Browser chunks draw into an off-screen staging canvas. The visible
   canvas swaps only when the frame's chunks are ready. Late worker results from
   older frame sequences are dropped.
@@ -269,10 +269,10 @@ Last updated: 2026-05-30.
   compact collapsed summary and a backend-defined grid per lane. Simulator
   telemetry currently appears as 4 x 4 browser chunks; FPGA telemetry can appear
   as the 16 x 16 RTL microtile grid.
-- **Why**: Lets us inspect scheduling and true hardware tile completion while
+- **Why**: Lets us inspect scheduling and true hardware microtile completion while
   still panning and zooming the main UI.
 - **Status**: **Keep**. This is a differentiating frontend feature and maps
-  directly to future `tile_id` + `tile_done` PL status.
+  directly to future `microtile_id` + `microtile_done` PL status.
 
 ## Tried and Rolled Back
 
@@ -300,12 +300,12 @@ and record:
 - main-panel FPS and p95 request-to-display latency
 - active preview latency vs final full-quality latency
 - dropped stale frames and browser-backpressure drops
-- tile completion order and per-tile elapsed time
+- chunk completion order and per-chunk elapsed time
 - minimaps on vs off
 - Performance mode vs Live Evolution
 - simulator backend vs FPGA backend once PL is connected
 
 For the FPGA backend, the Workload Inspector telemetry should be fed from the
-PS driver after it observes `tile_id` plus a `tile_done` or transfer-complete
-status bit. The frontend does not need a redesign for that; only the backend
-telemetry source changes.
+PS driver after it observes microtile completion or transfer-complete status
+bits. The frontend does not need a redesign for that; only the backend telemetry
+source changes.

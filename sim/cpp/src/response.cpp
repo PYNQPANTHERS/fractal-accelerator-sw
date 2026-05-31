@@ -6,13 +6,13 @@
 namespace fractal_sim {
 
 void write_frame(MessageType type,
-                 uint8_t tile_id,
+                 uint8_t chunk_id,
                  const std::byte* payload,
                  uint32_t payload_len) {
-    // 6-byte header: type, tile_id, length (LE uint32).
+    // 6-byte header: type, chunk_id, length (LE uint32).
     const uint8_t header[6] = {
         static_cast<uint8_t>(type),
-        tile_id,
+        chunk_id,
         static_cast<uint8_t>( payload_len        & 0xFF),
         static_cast<uint8_t>((payload_len >>  8) & 0xFF),
         static_cast<uint8_t>((payload_len >> 16) & 0xFF),

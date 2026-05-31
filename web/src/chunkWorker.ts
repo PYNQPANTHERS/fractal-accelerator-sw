@@ -1,7 +1,7 @@
 /**
- * Tile-unpack worker.
+ * Chunk-unpack worker.
  *
- * Owns the per-tile pipeline that used to run on the main thread:
+ * Owns the per-chunk pipeline that used to run on the main thread:
  *   nibble-packed payload bytes
  *     → unpacked RGBA Uint8ClampedArray
  *     → ImageData
@@ -10,29 +10,29 @@
  * Returns the ImageBitmap as a `transfer`-able so the main thread
  * can drawImage it onto staging in O(1) main-thread time.
  *
- * Replaces the inline paintAsync in TilePainter so deep-zoom renders
- * (which produce 16 tiles back-to-back) don't bottleneck the main
+ * Replaces the inline paintAsync in ChunkPainter so deep-zoom renders
+ * (which produce 16 chunks back-to-back) don't bottleneck the main
  * thread's pan smoothness.
  */
 
-import { TILE_PX } from './protocol'
+import { CHUNK_PX } from './protocol'
 
 type InitMsg = { type: 'init'; palette: Uint8ClampedArray }
-type TileMsg = {
-  type: 'tile'
+type ChunkMsg = {
+  type: 'chunk'
   jobId: number              // monotonic per main-thread send
   panel: number              // PanelId (kept opaque here)
-  tileId: number
+  chunkId: number
   frameSeq: number
   payload: ArrayBuffer       // transferred from main
 }
-type WorkerInbound = InitMsg | TileMsg
+type WorkerInbound = InitMsg | ChunkMsg
 
 export type WorkerOutbound = {
   type: 'bitmap'
   jobId: number
   panel: number
-  tileId: number
+  chunkId: number
   frameSeq: number
   bitmap: ImageBitmap
 }
@@ -65,10 +65,10 @@ self.addEventListener('message', async (ev: MessageEvent<WorkerInbound>) => {
     palette = msg.palette
     return
   }
-  if (msg.type === 'tile') {
-    const rgba = new Uint8ClampedArray(TILE_PX * TILE_PX * 4)
+  if (msg.type === 'chunk') {
+    const rgba = new Uint8ClampedArray(CHUNK_PX * CHUNK_PX * 4)
     unpackIntoRgba(new Uint8Array(msg.payload), rgba)
-    const imageData = new ImageData(rgba, TILE_PX, TILE_PX)
+    const imageData = new ImageData(rgba, CHUNK_PX, CHUNK_PX)
     let bitmap: ImageBitmap
     try {
       bitmap = await createImageBitmap(imageData)
@@ -79,7 +79,7 @@ self.addEventListener('message', async (ev: MessageEvent<WorkerInbound>) => {
       type: 'bitmap',
       jobId: msg.jobId,
       panel: msg.panel,
-      tileId: msg.tileId,
+      chunkId: msg.chunkId,
       frameSeq: msg.frameSeq,
       bitmap,
     }

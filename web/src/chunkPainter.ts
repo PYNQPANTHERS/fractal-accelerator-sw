@@ -1,8 +1,8 @@
 /**
- * Double-buffered tile painter.
+ * Double-buffered chunk painter.
  *
  * The hot pipeline (unpack → ImageData → ImageBitmap) lives in a Web
- * Worker (`tileWorker.ts`). This painter just takes already-made
+ * Worker (`chunkWorker.ts`). This painter just takes already-made
  * ImageBitmaps and blits them into the staging canvas via drawImage.
  * When all chunks for a frame_seq land, staging swaps to the visible
  * canvas atomically.
@@ -14,18 +14,18 @@ import { PALETTE_RGBA } from './palette'
 import {
   GRID,
   IMAGE_PX,
-  TILE_PX,
-  tileGridPosition,
+  CHUNK_PX,
+  chunkGridPosition,
 } from './protocol'
 
-const TILES_PER_FRAME = GRID * GRID
+const CHUNKS_PER_FRAME = GRID * GRID
 
-export class TilePainter {
+export class ChunkPainter {
   readonly canvas: HTMLCanvasElement
   private displayCtx: CanvasRenderingContext2D
   private staging: HTMLCanvasElement
   private stagingCtx: CanvasRenderingContext2D
-  private tilesGot = new Set<number>()
+  private chunksGot = new Set<number>()
   private currentSeq = -1
   /** Called when a full frame has been swapped into the visible canvas. */
   onFrameComplete: ((seq: number) => void) | null = null
@@ -46,12 +46,12 @@ export class TilePainter {
 
   /**
    * Paint an already-decoded bitmap (produced by the worker) into the
-   * staging canvas at the tile's grid position. Closes the bitmap
+   * staging canvas at the chunk's grid position. Closes the bitmap
    * regardless of whether we drew it (so the GPU memory is released).
    */
   paintBitmap(
     frameSeq: number,
-    tileId: number,
+    chunkId: number,
     bitmap: ImageBitmap,
   ): void {
     if (this.currentSeq >= 0 && isOlderSeq(frameSeq, this.currentSeq)) {
@@ -61,19 +61,19 @@ export class TilePainter {
 
     if (frameSeq !== this.currentSeq) {
       this.currentSeq = frameSeq
-      this.tilesGot.clear()
+      this.chunksGot.clear()
     }
 
-    const { col, row } = tileGridPosition(tileId)
-    const x = col * TILE_PX
-    const y = row * TILE_PX
+    const { col, row } = chunkGridPosition(chunkId)
+    const x = col * CHUNK_PX
+    const y = row * CHUNK_PX
     this.stagingCtx.drawImage(bitmap, x, y)
     bitmap.close()
 
-    this.tilesGot.add(tileId)
-    if (this.tilesGot.size === TILES_PER_FRAME) {
+    this.chunksGot.add(chunkId)
+    if (this.chunksGot.size === CHUNKS_PER_FRAME) {
       this.displayCtx.drawImage(this.staging, 0, 0)
-      this.tilesGot.clear()
+      this.chunksGot.clear()
       this.onFrameComplete?.(frameSeq)
     }
   }

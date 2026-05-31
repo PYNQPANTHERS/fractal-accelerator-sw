@@ -1,7 +1,7 @@
 """WebSocket server entry point.
 
 Accepts one browser connection at a time. Receives set_view / set_mode
-JSON messages, drives the scheduler, streams binary tile frames back.
+JSON messages, drives the scheduler, streams binary chunk frames back.
 
 Run:
     python3 -m server.main
@@ -25,8 +25,7 @@ from sim.config import RenderConfig
 from sim.renderer import render_image, ping as sim_ping
 from server.protocol import (
     parse_message,
-    pack_tile_frame,  # kept exported for tests/back-compat
-    pack_tile_bundle,
+    pack_chunk_bundle,
     set_view_to_config,
     SetViewMessage,
     SetModeMessage,
@@ -47,9 +46,9 @@ PORT = int(os.environ.get("SERVER_PORT", "8765"))
 
 # Maximum bytes allowed in the WebSocket send buffer before we consider
 # the browser too slow and drop the current render.
-_MAX_SEND_BUFFER = 256 * 1024   # 256 KB — about 8 tiles worth
-_TELEMETRY_TILE_COLS = 4
-_TELEMETRY_TILE_ROWS = 4
+_MAX_SEND_BUFFER = 256 * 1024   # 256 KB — about 8 chunks worth
+_TELEMETRY_CHUNK_COLS = 4
+_TELEMETRY_CHUNK_ROWS = 4
 
 
 def _quality_label(config: RenderConfig) -> str:
@@ -123,7 +122,7 @@ async def _render_and_stream(
 
     Fix 4 — Backpressure:
         If the browser's send buffer is too full, skip this render and wait
-        for the next job rather than queuing tiles the browser can't consume.
+        for the next job rather than queuing chunks the browser can't consume.
     """
     result = scheduler.next_job()
     if result is None:
@@ -162,35 +161,35 @@ async def _render_and_stream(
             "quality": _quality_label(config),
             "max_iter": config.max_iter,
             "backend": "sim",
-            "tile_cols": _TELEMETRY_TILE_COLS,
-            "tile_rows": _TELEMETRY_TILE_ROWS,
+            "chunk_cols": _TELEMETRY_CHUNK_COLS,
+            "chunk_rows": _TELEMETRY_CHUNK_ROWS,
         },
     )
 
-    tiles: list[tuple[int, bytes]] = []
-    async for tile_id, tile_bytes, tile_elapsed_ms in render_image(config):
-        tiles.append((tile_id, tile_bytes))
+    chunks: list[tuple[int, bytes]] = []
+    async for chunk_id, chunk_bytes, chunk_elapsed_ms in render_image(config):
+        chunks.append((chunk_id, chunk_bytes))
         await _send_telemetry(
             ws,
             telemetry_enabled(),
             {
-                "event": "tile_done",
+                "event": "chunk_done",
                 "panel_id": panel_id,
                 "frame_seq": job.frame_seq,
-                "tile_id": tile_id,
-                "elapsed_ms": round(tile_elapsed_ms, 3),
+                "chunk_id": chunk_id,
+                "elapsed_ms": round(chunk_elapsed_ms, 3),
                 "quality": _quality_label(config),
                 "backend": "sim",
                 "stage": "available",
-                "tile_cols": _TELEMETRY_TILE_COLS,
-                "tile_rows": _TELEMETRY_TILE_ROWS,
+                "chunk_cols": _TELEMETRY_CHUNK_COLS,
+                "chunk_rows": _TELEMETRY_CHUNK_ROWS,
             },
         )
-    if tiles:
-        await ws.send(pack_tile_bundle(
+    if chunks:
+        await ws.send(pack_chunk_bundle(
             panel_id=panel_id,
             frame_seq=job.frame_seq,
-            tiles=tiles,
+            chunks=chunks,
         ))
         await _send_telemetry(
             ws,
@@ -200,7 +199,7 @@ async def _render_and_stream(
                 "panel_id": panel_id,
                 "frame_seq": job.frame_seq,
                 "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
-                "tile_count": len(tiles),
+                "chunk_count": len(chunks),
                 "quality": _quality_label(config),
                 "backend": "sim",
             },
@@ -251,7 +250,7 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                 # Mandelbrot pan changes Julia's c. Pure zoom doesn't:
                 # the crosshair stays on the same complex point, so no
                 # Julia re-render is needed. Skip the coupling push then
-                # — saves a 16-tile render the user can't see anyway.
+                # — saves a 16-chunk render the user can't see anyway.
                 if msg.panel_id == PANEL_MANDELBROT_MAIN:
                     pan_changed = (prev is None
                                    or prev.pan_x != cfg.pan_x

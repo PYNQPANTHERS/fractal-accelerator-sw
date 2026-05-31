@@ -20,12 +20,12 @@ implementations.
 The full-quality simulator path uses Mariani-Silver:
 
 ```text
-render_image(preview=false) -> compute_tile_mariani(...)
+render_image(preview=false) -> compute_chunk_mariani(...)
 ```
 
 This is the FPGA-equivalent software path. It matches the intended hardware
 architecture: quad jobs, border sampling, colour comparison, split mixed
-regions, flood-fill uniform regions, and complete tiles/regions as work
+regions, flood-fill uniform regions, and complete chunks/regions as work
 finishes.
 
 This is the path that should be used for the main CPU-vs-FPGA correctness and
@@ -73,7 +73,7 @@ sends the normal full `max_iter` on settle.
 Pros:
 
 - No RTL change beyond the normal `max_iter` control path.
-- Keeps the same pixel grid and tile output format.
+- Keeps the same pixel grid and chunk output format.
 - Easy to benchmark against the current software behaviour.
 
 Cons:
@@ -90,15 +90,15 @@ Pros:
 
 - Closest to the current simulator preview.
 - Directly reduces the number of iterator jobs.
-- Same final tile payload format can still be emitted.
+- Same final chunk payload format can still be emitted.
 
 Cons:
 
 - Needs RTL/control support for stepping over block origins and expanding the
-  result into the tile memory/output format.
+  result into the chunk memory/output format.
 - Must be clearly marked as preview-only because it is visibly lower resolution.
 
-PS-only downsampling after the FPGA has already rendered a full tile would not
+PS-only downsampling after the FPGA has already rendered a full chunk would not
 increase FPGA throughput; it would only make the displayed image look lower
 resolution after paying the full hardware compute cost.
 
@@ -150,7 +150,7 @@ The frontend/server contract already has the right shape:
 - `interaction="final"` on release or wheel settle
 - `quality="preview"` for active Performance renders
 - `quality="full"` for settled renders
-- same tile ids, frame sequence, panel ids, and binary tile payload format
+- same chunk ids, frame sequence, panel ids, and binary chunk payload format
 
 So the frontend should not need redesigning when the FPGA path arrives.
 

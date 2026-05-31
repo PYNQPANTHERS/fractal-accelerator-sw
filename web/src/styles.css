@@ -846,20 +846,20 @@ body::after {
   border-color: rgba(192, 127, 127, 0.32);
 }
 
-.workload-tile-grid {
-  --tile-cols: 4;
+.workload-cell-grid {
+  --cell-cols: 4;
   display: grid;
-  grid-template-columns: repeat(var(--tile-cols), minmax(0, 1fr));
+  grid-template-columns: repeat(var(--cell-cols), minmax(0, 1fr));
   gap: 4px;
   max-width: 236px;
   margin: 8px auto 7px;
 }
 
-.workload-tile-grid-rtl-tile {
+.workload-cell-grid-rtl-microtile {
   gap: 2px;
 }
 
-.workload-tile {
+.workload-cell {
   display: grid;
   place-items: center;
   aspect-ratio: 1;
@@ -878,11 +878,11 @@ body::after {
     box-shadow 120ms ease;
 }
 
-.workload-tile-grid-rtl-tile .workload-tile {
+.workload-cell-grid-rtl-microtile .workload-cell {
   border-color: rgba(255, 255, 255, 0.045);
 }
 
-.workload-tile.done {
+.workload-cell.done {
   color: rgba(7, 7, 10, 0.78);
   background: linear-gradient(135deg, #6fc3ab, var(--accent));
   border-color: rgba(255, 255, 255, 0.18);

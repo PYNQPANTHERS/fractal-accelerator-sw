@@ -6,9 +6,9 @@
 //
 // Frame layout:
 //   byte 0     : message_type
-//   byte 1     : tile_id (0..15 for tile responses, 0 for non-tile)
+//   byte 1     : chunk_id (0..15 for chunk responses, 0 for non-chunk)
 //   bytes 2..5 : payload length, uint32 little-endian
-//   bytes 6..N : payload (zero-length for non-tile responses)
+//   bytes 6..N : payload (zero-length for non-chunk responses)
 
 #pragma once
 
@@ -19,14 +19,14 @@
 namespace fractal_sim {
 
 enum class MessageType : uint8_t {
-    Tile  = 0x01,    // payload = tile bytes
+    Chunk = 0x01,    // payload = chunk bytes
     Pong  = 0x02,    // empty payload, in response to ping
     Error = 0xFF,    // payload = UTF-8 error message
 };
 
 // Write one frame to stdout. payload may be nullptr if length is zero.
 void write_frame(MessageType type,
-                 uint8_t tile_id,
+                 uint8_t chunk_id,
                  const std::byte* payload,
                  uint32_t payload_len);
 

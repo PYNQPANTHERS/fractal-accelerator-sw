@@ -1,8 +1,8 @@
 /**
  * WebSocket lifecycle for the render server.
  *
- * Single connection used for both control (JSON) and tiles (binary).
- * Stale-frame drop: each panel has a "latest seq" — tiles with an
+ * Single connection used for both control (JSON) and chunks (binary).
+ * Stale-frame drop: each panel has a "latest seq" — chunks with an
  * older seq are discarded so we never paint the previous viewport
  * over the current one when the server is mid-frame.
  */
@@ -10,9 +10,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   parseMessage,
   Panel,
+  type ChunkFrame,
   type ClientMessage,
   type TelemetryMessage,
-  type TileFrame,
 } from './protocol'
 
 type ConnState = 'connecting' | 'open' | 'closed'
@@ -27,7 +27,7 @@ const MAX_BACKOFF_MS = 4_000
 
 export function useRenderSocket(
   url: string,
-  onTile: (tile: TileFrame) => void,
+  onChunk: (chunk: ChunkFrame) => void,
   onTelemetry?: (msg: TelemetryMessage) => void,
 ): RenderSocket {
   const [state, setState] = useState<ConnState>('connecting')
@@ -38,9 +38,9 @@ export function useRenderSocket(
     [Panel.MandelbrotMini]: -1,
     [Panel.JuliaMini]: -1,
   })
-  // Stable ref so the effect doesn't re-subscribe when onTile identity changes.
-  const onTileRef = useRef(onTile)
-  onTileRef.current = onTile
+  // Stable ref so the effect doesn't re-subscribe when onChunk identity changes.
+  const onChunkRef = useRef(onChunk)
+  onChunkRef.current = onChunk
   const onTelemetryRef = useRef(onTelemetry)
   onTelemetryRef.current = onTelemetry
 
@@ -73,7 +73,7 @@ export function useRenderSocket(
           }
           return
         }
-        let frames: TileFrame[]
+        let frames: ChunkFrame[]
         try {
           frames = parseMessage(ev.data as ArrayBuffer)
         } catch (err) {
@@ -81,7 +81,7 @@ export function useRenderSocket(
           return
         }
         // A bundle is one frame_seq for one panel by construction, so
-        // the staleness check on the first tile applies to all of them.
+        // the staleness check on the first chunk applies to all of them.
         if (frames.length === 0) return
         const first = frames[0]
         const seen = latestSeqRef.current[first.panel]
@@ -96,7 +96,7 @@ export function useRenderSocket(
           return
         }
         latestSeqRef.current[first.panel] = first.frameSeq
-        for (const f of frames) onTileRef.current(f)
+        for (const f of frames) onChunkRef.current(f)
       }
 
       ws.onclose = () => {
@@ -149,7 +149,7 @@ export function useRenderSocket(
 /**
  * Wrap-aware seq comparison: a is "older" than b if it sits in the
  * backward half of the 16-bit window. Tolerates u16 rollover (0 → 65535).
- * Equal seq is NOT older — same image, just another tile.
+ * Equal seq is NOT older — same image, just another chunk.
  */
 function isOlder(a: number, b: number): boolean {
   const diff = (b - a) & 0xffff

@@ -20,7 +20,7 @@ Two large panels are rendered side by side:
   canonical built-in overview key; Julia uses the latest zoomed-out Julia frame.
 - **Workload Inspector**: floating, draggable FPGA-facing debug overlay showing
   scheduler state, active/pending panel, frame sequence, preview/full quality,
-  tile completion order, tile latency, stale drops, and render latency.
+  chunk completion order, chunk latency, stale drops, and render latency.
 
 ## Render Contract
 
@@ -35,8 +35,8 @@ Two large panels are rendered side by side:
 - Main image is **1024 x 1024**.
 - Browser-facing chunk geometry is **4 x 4**, 16 chunks total, each
   **256 x 256**.
-- The FPGA path should expose finer **16 x 16** RTL tile completion to the
-  Workload Inspector through telemetry, while the PS Tile Streamer aggregates
+- The FPGA path should expose finer **16 x 16** RTL microtile completion to the
+  Workload Inspector through telemetry, while the PS Chunk Streamer aggregates
   those microtiles into the existing 256 x 256 browser chunks.
 - Pixel format is nibble-packed **4-bit palette indices**.
 - There is no active 5x5/6x6 pre-rendered margin and no predictive prefetch in
@@ -59,14 +59,14 @@ Two large panels are rendered side by side:
   to avoid React work during pointer movement.
 - Client backpressure keeps at most one in-flight render per panel interaction;
   the latest view overwrites any pending view.
-- Tile unpacking and `ImageBitmap` creation happen in a Web Worker.
+- Chunk unpacking and `ImageBitmap` creation happen in a Web Worker.
 - Binary WebSocket sends are bundled per render, and the painter swaps the
   frame atomically once all 16 browser chunks arrive.
 - Workload telemetry is opt-in and only enabled while the floating inspector is
   open, so the normal render path does not pay for debug data.
 
 More detail is in [OPTIMISATIONS.md](OPTIMISATIONS.md), the FPGA streaming
-contract is in [FPGA_TILE_STREAMING.md](FPGA_TILE_STREAMING.md), and the
+contract is in [FPGA_CHUNK_STREAMING.md](FPGA_CHUNK_STREAMING.md), and the
 pan/jitter history is in [PAN_SMOOTHNESS.md](PAN_SMOOTHNESS.md).
 
 ## Run

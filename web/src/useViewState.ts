@@ -46,7 +46,7 @@ const CANVAS_MARGIN_FRAC = 0.0 // 4×4 grid has no margin
 const MAX_PAN_PX_PER_MS = 1.5
 /** Predictive prefetch: when a render lands mid-drag with the world
  *  still moving above this speed, speculatively request the *next*
- *  render at (worldPos + velocity × LOOKAHEAD). Tiles arrive roughly
+ *  render at (worldPos + velocity × LOOKAHEAD). Chunks arrive roughly
  *  when the cursor gets there, so the swap is timely instead of late.
  *  Disabled in the current 4x4 path because CANVAS_MARGIN_FRAC is 0. */
 const PREFETCH_MIN_SPEED_PX_PER_MS = 0.2
@@ -58,7 +58,7 @@ export interface ViewController {
   bind: ReturnType<typeof useGesture>
   setView: (next: ViewState) => void
   /**
-   * Called by the TilePainter when a full streamed frame has landed.
+   * Called by the ChunkPainter when a full streamed frame has landed.
    * Re-baselines the drag baseline so the next pointermove writes the
    * correct transform delta relative to the freshly-painted origin.
    */
@@ -107,7 +107,7 @@ export function useViewState(
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const wheelAcc = useRef(0)
   const drag = useRef<DragSession | null>(null)
-  // True when a streamed render is in flight (sent but final tile not
+  // True when a streamed render is in flight (sent but final chunk not
   // yet received). Used to gate the next stream-commit so we never
   // pipeline requests faster than the server can drain them.
   const inFlight = useRef(false)

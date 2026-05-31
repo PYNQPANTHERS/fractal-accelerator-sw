@@ -2,10 +2,10 @@
  * Wire protocol shared with the server (see server/protocol.py).
  *
  * Server → client: binary chunk frames, 16-byte header + payload.
- *   u8  msg_type     0x01 = tile
+ *   u8  msg_type     0x01 = chunk
  *   u8  panel_id     0..3 (see Panel below)
- *   u8  tile_id      0..15 row-major within the 4×4 panel grid
- *   u16 frame_seq    LE; per-panel; used to drop stale tiles
+ *   u8  chunk_id     0..15 row-major within the 4×4 panel grid
+ *   u16 frame_seq    LE; per-panel; used to drop stale chunks
  *   u16 width        LE
  *   u16 height       LE
  *   u8  pixel_format 0x10 = 4-bit indices, nibble-packed, low nibble first
@@ -24,16 +24,16 @@
  */
 
 export const HEADER_BYTES = 16
-export const TILE_PX = 256
-/** 4×4 grid of 256-px tiles (16 tiles total). */
+export const CHUNK_PX = 256
+/** 4×4 grid of 256-px browser chunks (16 chunks total). */
 export const GRID = 4
 export const VISIBLE_PX = 1024
-export const IMAGE_PX = TILE_PX * GRID // 1024
+export const IMAGE_PX = CHUNK_PX * GRID // 1024
 export const VISIBLE_OFFSET = 0
-export const TILE_PAYLOAD_BYTES = (TILE_PX * TILE_PX) / 2 // 32 768
+export const CHUNK_PAYLOAD_BYTES = (CHUNK_PX * CHUNK_PX) / 2 // 32 768
 
-export const MSG_TILE        = 0x01
-export const MSG_TILE_BUNDLE = 0x02
+export const MSG_CHUNK        = 0x01
+export const MSG_CHUNK_BUNDLE = 0x02
 export const PIXEL_FMT_4BIT  = 0x10
 
 export const Panel = {
@@ -45,9 +45,9 @@ export const Panel = {
 
 export type Panel = (typeof Panel)[keyof typeof Panel]
 
-export interface TileFrame {
+export interface ChunkFrame {
   panel: Panel
-  tileId: number
+  chunkId: number
   frameSeq: number
   width: number
   height: number
@@ -56,24 +56,24 @@ export interface TileFrame {
 }
 
 /**
- * Parse one binary WebSocket message into TileFrames.
+ * Parse one binary WebSocket message into ChunkFrames.
  *
  * Two formats supported:
- *   MSG_TILE        — one 256 x 256 chunk
- *   MSG_TILE_BUNDLE — current path, N chunks in one message
+ *   MSG_CHUNK        — one 256 x 256 chunk
+ *   MSG_CHUNK_BUNDLE — current path, N chunks in one message
  *
- * Always returns an array — callers iterate and deliver each TileFrame
+ * Always returns an array — callers iterate and deliver each ChunkFrame
  * to the painter, regardless of how the server chose to pack them.
  */
-export function parseMessage(buf: ArrayBuffer): TileFrame[] {
+export function parseMessage(buf: ArrayBuffer): ChunkFrame[] {
   if (buf.byteLength < HEADER_BYTES) {
     throw new Error(`frame too short: ${buf.byteLength} bytes`)
   }
   const view = new DataView(buf)
   const msgType = view.getUint8(0)
-  if (msgType === MSG_TILE) {
+  if (msgType === MSG_CHUNK) {
     const panel = view.getUint8(1) as Panel
-    const tileId = view.getUint8(2)
+    const chunkId = view.getUint8(2)
     const frameSeq = view.getUint16(3, true)
     const width = view.getUint16(5, true)
     const height = view.getUint16(7, true)
@@ -81,7 +81,7 @@ export function parseMessage(buf: ArrayBuffer): TileFrame[] {
     const payloadBytes = (width * height) / 2
     return [{
       panel,
-      tileId,
+      chunkId,
       frameSeq,
       width,
       height,
@@ -89,22 +89,22 @@ export function parseMessage(buf: ArrayBuffer): TileFrame[] {
       payload: new Uint8Array(buf, HEADER_BYTES, payloadBytes),
     }]
   }
-  if (msgType === MSG_TILE_BUNDLE) {
+  if (msgType === MSG_CHUNK_BUNDLE) {
     const panel = view.getUint8(1) as Panel
-    const tileCount = view.getUint8(2)
+    const chunkCount = view.getUint8(2)
     const frameSeq = view.getUint16(3, true)
     const width = view.getUint16(5, true)
     const height = view.getUint16(7, true)
     const pixelFormat = view.getUint8(9)
     const payloadBytes = (width * height) / 2
     const recordSize = 1 + payloadBytes
-    const out: TileFrame[] = new Array(tileCount)
+    const out: ChunkFrame[] = new Array(chunkCount)
     let pos = HEADER_BYTES
-    for (let i = 0; i < tileCount; i++) {
-      const tileId = view.getUint8(pos)
+    for (let i = 0; i < chunkCount; i++) {
+      const chunkId = view.getUint8(pos)
       out[i] = {
         panel,
-        tileId,
+        chunkId,
         frameSeq,
         width,
         height,
@@ -118,18 +118,18 @@ export function parseMessage(buf: ArrayBuffer): TileFrame[] {
   throw new Error(`unexpected message type: 0x${msgType.toString(16)}`)
 }
 
-/** Back-compat single-tile parser kept for tests. */
-export function parseFrame(buf: ArrayBuffer): TileFrame {
+/** Back-compat single-chunk parser kept for tests. */
+export function parseFrame(buf: ArrayBuffer): ChunkFrame {
   const frames = parseMessage(buf)
   if (frames.length !== 1) {
-    throw new Error(`expected single tile, got ${frames.length}`)
+    throw new Error(`expected single chunk, got ${frames.length}`)
   }
   return frames[0]
 }
 
-/** (col, row) in the 4×4 tile grid for a given tile id. */
-export function tileGridPosition(tileId: number): { col: number; row: number } {
-  return { col: tileId % GRID, row: Math.floor(tileId / GRID) }
+/** (col, row) in the 4×4 chunk grid for a given chunk id. */
+export function chunkGridPosition(chunkId: number): { col: number; row: number } {
+  return { col: chunkId % GRID, row: Math.floor(chunkId / GRID) }
 }
 
 export type Quality = 'full' | 'preview'
@@ -156,21 +156,34 @@ export type TelemetryMessage =
       quality: Quality
       max_iter: number
       backend: string
-      tile_cols: number
-      tile_rows: number
+      chunk_cols?: number
+      chunk_rows?: number
     }
   | {
       type: 'telemetry'
-      event: 'tile_done'
+      event: 'chunk_done'
       panel_id: Panel
       frame_seq: number
-      tile_id: number
+      chunk_id: number
       elapsed_ms: number
       quality: Quality
       backend: string
       stage: 'available' | 'compute' | 'transfer'
-      tile_cols: number
-      tile_rows: number
+      chunk_cols: number
+      chunk_rows: number
+    }
+  | {
+      type: 'telemetry'
+      event: 'microtile_done'
+      panel_id: Panel
+      frame_seq: number
+      microtile_id: number
+      elapsed_ms: number
+      quality: Quality
+      backend: string
+      stage: 'available' | 'compute' | 'transfer'
+      microtile_cols: number
+      microtile_rows: number
     }
   | {
       type: 'telemetry'
@@ -178,7 +191,7 @@ export type TelemetryMessage =
       panel_id: Panel
       frame_seq: number
       elapsed_ms: number
-      tile_count: number
+      chunk_count?: number
       quality: Quality
       backend: string
     }

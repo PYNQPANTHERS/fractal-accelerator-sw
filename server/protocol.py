@@ -1,13 +1,13 @@
 """Wire-format parsing and packing.
 
 Incoming (browser -> server): JSON text frames.
-Outgoing (server -> browser): binary tile frames.
+Outgoing (server -> browser): binary chunk frames.
 
-Binary tile frame layout (matches docs/wire-format.md):
+Binary chunk frame layout:
   byte 0      : message_type = 0x01
   byte 1      : panel_id (0=mandelbrot main, 1=julia main,
                            2=mandelbrot minimap, 3=julia minimap)
-  byte 2      : tile_id (0..15)
+  byte 2      : chunk_id (0..15, 256 x 256 browser chunk)
   bytes 3-4   : frame_seq, uint16 little-endian
   bytes 5-6   : width,     uint16 little-endian
   bytes 7-8   : height,    uint16 little-endian
@@ -35,10 +35,10 @@ PANEL_JULIA_MINIMAP      = 3
 
 # ── Binary frame constants ────────────────────────────────────────────────────
 
-MSG_TILE        = 0x01
-MSG_TILE_BUNDLE = 0x02       # all tiles for one render, one WS frame
+MSG_CHUNK        = 0x01
+MSG_CHUNK_BUNDLE = 0x02      # all chunks for one render, one WS frame
 PIXEL_FMT_4BIT  = 0x10       # nibble-packed 4-bit indices, low nibble first
-TILE_PIXELS     = 256
+CHUNK_PIXELS     = 256
 
 _HEADER_FMT  = "<BBBHHHB6x"   # 16 bytes: 10 data + 6 reserved zeros
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)  # 16
@@ -169,18 +169,18 @@ def set_view_to_config(msg: SetViewMessage) -> RenderConfig:
 
 # ── Outgoing frame packing ────────────────────────────────────────────────────
 
-def pack_tile_frame(panel_id:  int,
-                    tile_id:   int,
-                    frame_seq: int,
-                    payload:   bytes,
-                    width:     int = TILE_PIXELS,
-                    height:    int = TILE_PIXELS) -> bytes:
-    """Pack one tile into a binary WebSocket frame ready to send."""
+def pack_chunk_frame(panel_id:  int,
+                     chunk_id:  int,
+                     frame_seq: int,
+                     payload:   bytes,
+                     width:     int = CHUNK_PIXELS,
+                     height:    int = CHUNK_PIXELS) -> bytes:
+    """Pack one 256 x 256 browser chunk into a binary WebSocket frame."""
     header = struct.pack(
         _HEADER_FMT,
-        MSG_TILE,
+        MSG_CHUNK,
         panel_id,
-        tile_id,
+        chunk_id,
         frame_seq & 0xFFFF,
         width,
         height,
@@ -189,30 +189,30 @@ def pack_tile_frame(panel_id:  int,
     return header + payload
 
 
-def pack_tile_bundle(panel_id:  int,
-                     frame_seq: int,
-                     tiles:     list[tuple[int, bytes]],
-                     width:     int = TILE_PIXELS,
-                     height:    int = TILE_PIXELS) -> bytes:
-    """Pack all tiles for one render into a single WS binary frame.
+def pack_chunk_bundle(panel_id:  int,
+                      frame_seq: int,
+                      chunks:    list[tuple[int, bytes]],
+                      width:     int = CHUNK_PIXELS,
+                      height:    int = CHUNK_PIXELS) -> bytes:
+    """Pack all browser chunks for one render into one WS binary frame.
 
     Format:
-      bytes 0-15  : header (same 16-byte layout as pack_tile_frame,
-                    but msg_type = MSG_TILE_BUNDLE and the byte that
-                    used to be tile_id is now tile_count).
-      bytes 16..  : N tile records, each = (u8 tile_id) + (w*h/2 payload).
+      bytes 0-15  : header (same 16-byte layout as pack_chunk_frame,
+                    but msg_type = MSG_CHUNK_BUNDLE and the byte that
+                    is chunk_id in a single frame is now chunk_count).
+      bytes 16..  : N chunk records, each = (u8 chunk_id) + (w*h/2 payload).
 
-    Sending one bundled frame instead of N separate tile frames removes
-    N x ws.send overhead per render. Current geometry is 16 x 32 KB tiles.
+    Sending one bundled frame instead of N separate chunk frames removes
+    N x ws.send overhead per render. Current geometry is 16 x 32 KB chunks.
     """
-    tile_count = len(tiles)
-    if tile_count > 255:
-        raise ValueError(f"tile_count {tile_count} > 255")
+    chunk_count = len(chunks)
+    if chunk_count > 255:
+        raise ValueError(f"chunk_count {chunk_count} > 255")
     header = struct.pack(
         _HEADER_FMT,
-        MSG_TILE_BUNDLE,
+        MSG_CHUNK_BUNDLE,
         panel_id,
-        tile_count,
+        chunk_count,
         frame_seq & 0xFFFF,
         width,
         height,
@@ -220,13 +220,13 @@ def pack_tile_bundle(panel_id:  int,
     )
     # Pre-size the bytearray and fill in one pass. bytes.join would
     # also work but allocates more temporaries.
-    payload_bytes_per_tile = (width * height) // 2
-    record_size = 1 + payload_bytes_per_tile
-    out = bytearray(_HEADER_SIZE + tile_count * record_size)
+    payload_bytes_per_chunk = (width * height) // 2
+    record_size = 1 + payload_bytes_per_chunk
+    out = bytearray(_HEADER_SIZE + chunk_count * record_size)
     out[:_HEADER_SIZE] = header
     pos = _HEADER_SIZE
-    for tile_id, payload in tiles:
-        out[pos] = tile_id & 0xFF
-        out[pos + 1 : pos + 1 + payload_bytes_per_tile] = payload
+    for chunk_id, payload in chunks:
+        out[pos] = chunk_id & 0xFF
+        out[pos + 1 : pos + 1 + payload_bytes_per_chunk] = payload
         pos += record_size
     return bytes(out)

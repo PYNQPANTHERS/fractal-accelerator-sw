@@ -3,7 +3,7 @@
 Software simulator for the PL. Lets the frontend, scheduler, wire protocol, and
 benchmark tooling be built before the FPGA backend is ready.
 
-Renders Mandelbrot, Julia, and Burning Ship at 1024 x 1024 in 4 x 4 tiles,
+Renders Mandelbrot, Julia, and Burning Ship at 1024 x 1024 in 4 x 4 chunks,
 matching the shape the real pipeline will expose to the PS.
 
 There is one simulator implementation: the C++ binary in `sim/cpp`. The browser
@@ -18,8 +18,8 @@ second simulator.
 # Build the C++ binary
 cd sim/cpp && cmake -B build && cmake --build build
 
-# Render one tile from Python
-python3 -m sim.cli --pan-x -0.5 --pan-y 0 --zoom 0 --tile 5 > tile.bin
+# Render one chunk from Python
+python3 -m sim.cli --pan-x -0.5 --pan-y 0 --zoom 0 --chunk 5 > chunk.bin
 
 # Run the contract tests
 pytest tests/
@@ -32,18 +32,19 @@ Python caller
   └─ render_image(config)
        sim/renderer.py
          └─ JSON command on stdin -> sim/cpp/build/fractal_sim
-            framed binary tiles on stdout <-┘
-       yields (tile_id, bytes, elapsed_ms)
+            framed binary chunks on stdout <-┘
+       yields (chunk_id, bytes, elapsed_ms)
 ```
 
 C++ does the math. Python is a thin client over stdio. The intended hardware
 driver has the same shape, just with AXI/DMA and PL status/IRQ events instead
 of stdin/stdout.
 
-The full-image path computes all 16 tiles in parallel and streams each tile
-frame back as its worker completes. This gives realistic tile-completion order
-for the Workload Inspector today, and maps to future FPGA `tile_id` +
-`tile_done` / transfer-complete status later.
+The full-image path computes all 16 browser chunks in parallel and streams each
+chunk frame back as its worker completes. This gives realistic chunk-completion
+order for the Workload Inspector today. The future FPGA path can feed finer
+16 x 16 RTL microtile telemetry separately while the PS Chunk Streamer aggregates
+image bytes into these same 256 x 256 chunks.
 
 ## From Python
 
@@ -52,23 +53,23 @@ from sim.config import RenderConfig
 from sim.renderer import render_image
 
 cfg = RenderConfig(pan_x=-0.5, pan_y=0.0, zoom=0, fractal_type="mandelbrot")
-async for tile_id, tile_bytes, elapsed_ms in render_image(cfg):
+async for chunk_id, chunk_bytes, elapsed_ms in render_image(cfg):
     ...
 ```
 
 The C++ subprocess spawns on first call and is reused for the rest of the session.
 
-## Tile layout
+## Chunk layout
 
-- Full image: 1024 x 1024, split into 16 tiles of 256 x 256 each (4 x 4 grid,
-  `tile_id` 0..15, row-major).
+- Full image: 1024 x 1024, split into 16 chunks of 256 x 256 each (4 x 4 grid,
+  `chunk_id` 0..15, row-major).
 - Each pixel: 4-bit iteration count.
-- Nibble-packed, two pixels per byte → **32 KB per tile**.
+- Nibble-packed, two pixels per byte -> **32 KB per chunk**.
 
 ## Performance
 
-Full image (16 tiles) renders in roughly the same latency as the slowest tile
-because the simulator runs one worker per tile. Exact numbers depend on zoom,
+Full image (16 chunks) renders in roughly the same latency as the slowest chunk
+because the simulator runs one worker per chunk. Exact numbers depend on zoom,
 `max_iter`, CPU, and preview/full quality.
 
 Full-quality renders use the Mariani-Silver path. Preview renders use a

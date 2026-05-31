@@ -4,7 +4,7 @@ import { Panel, type Quality, type TelemetryMessage } from './protocol'
 
 type LaneStatus = 'idle' | 'pending' | 'rendering' | 'complete' | 'dropped'
 
-interface TileProgress {
+interface CellProgress {
   elapsedMs: number
   order: number
   stage: string
@@ -19,9 +19,9 @@ interface PanelWorkload {
   quality: Quality | null
   backend: string | null
   maxIter: number | null
-  tileCols: number
-  tileRows: number
-  tiles: Record<number, TileProgress>
+  cellCols: number
+  cellRows: number
+  cells: Record<number, CellProgress>
   lastFrameMs: number | null
   dropped: number
 }
@@ -54,8 +54,8 @@ const PANEL_LABEL: Record<Panel, string> = {
 }
 
 const RENDER_CHUNK_PX = 256
-const RTL_TILE_PX = 16
-const RTL_TILES_PER_CHUNK_SIDE = RENDER_CHUNK_PX / RTL_TILE_PX
+const RTL_MICROTILE_PX = 16
+const RTL_MICROTILES_PER_CHUNK_SIDE = RENDER_CHUNK_PX / RTL_MICROTILE_PX
 
 export function useWorkloadTelemetry() {
   const [snapshot, setSnapshot] = useState<WorkloadSnapshot>(() => ({
@@ -101,7 +101,7 @@ export function WorkloadInspector({
 
       <p className="workload-note">
         Sim telemetry reports 256 px render chunks. FPGA telemetry can report
-        the 16 px RTL tile_done / transfer-complete grid directly.
+        the 16 px RTL microtile completion / transfer-complete grid directly.
       </p>
     </div>
   )
@@ -190,7 +190,7 @@ export function FloatingWorkloadPanel({
       >
         <div>
           <h2>Workload</h2>
-          <span>{collapsed ? compactStatus(snapshot) : 'tile telemetry'}</span>
+          <span>{collapsed ? compactStatus(snapshot) : 'chunk telemetry'}</span>
         </div>
         <div
           className="workload-floating-actions"
@@ -224,9 +224,9 @@ export function FloatingWorkloadPanel({
 
 function WorkloadMiniSummary({ snapshot }: { snapshot: WorkloadSnapshot }) {
   const active = snapshot.lanes[snapshot.activePanel]
-  const total = active.tileCols * active.tileRows
-  const done = Object.keys(active.tiles).length
-  const lastTileMs = latestTileMs(active)
+  const total = active.cellCols * active.cellRows
+  const done = Object.keys(active.cells).length
+  const lastCellMs = latestCellMs(active)
   const grid = gridInfo(active)
 
   return (
@@ -235,7 +235,7 @@ function WorkloadMiniSummary({ snapshot }: { snapshot: WorkloadSnapshot }) {
       <Metric label={grid.metricLabel} value={`${done}/${total}`} />
       <Metric
         label="Last"
-        value={lastTileMs === null ? '-' : `${lastTileMs.toFixed(1)} ms`}
+        value={lastCellMs === null ? '-' : `${lastCellMs.toFixed(1)} ms`}
       />
       <Metric label="Pending" value={String(snapshot.pendingCount)} />
     </div>
@@ -249,9 +249,9 @@ function WorkloadLane({
   lane: PanelWorkload
   active: boolean
 }) {
-  const tileTotal = lane.tileCols * lane.tileRows
-  const doneCount = Object.keys(lane.tiles).length
-  const lastTileMs = latestTileMs(lane)
+  const cellTotal = lane.cellCols * lane.cellRows
+  const doneCount = Object.keys(lane.cells).length
+  const lastCellMs = latestCellMs(lane)
   const grid = gridInfo(lane)
 
   return (
@@ -282,21 +282,21 @@ function WorkloadLane({
       </div>
 
       <div
-        className={`workload-tile-grid workload-tile-grid-${grid.kind}`}
-        style={{ '--tile-cols': lane.tileCols } as CSSProperties}
+        className={`workload-cell-grid workload-cell-grid-${grid.kind}`}
+        style={{ '--cell-cols': lane.cellCols } as CSSProperties}
       >
-        {Array.from({ length: tileTotal }, (_, tileId) => {
-          const tile = lane.tiles[tileId]
-          const title = tile
-            ? `${grid.cellLabel} ${tileId}: ${tile.elapsedMs.toFixed(2)} ms`
-            : `${grid.cellLabel} ${tileId}`
+        {Array.from({ length: cellTotal }, (_, cellId) => {
+          const cell = lane.cells[cellId]
+          const title = cell
+            ? `${grid.cellLabel} ${cellId}: ${cell.elapsedMs.toFixed(2)} ms`
+            : `${grid.cellLabel} ${cellId}`
           return (
             <span
-              key={tileId}
-              className={`workload-tile ${tile ? 'done' : ''}`}
+              key={cellId}
+              className={`workload-cell ${cell ? 'done' : ''}`}
               title={title}
             >
-              {grid.showElapsedInCell && tile ? tile.elapsedMs.toFixed(1) : ''}
+              {grid.showElapsedInCell && cell ? cell.elapsedMs.toFixed(1) : ''}
             </span>
           )
         })}
@@ -306,9 +306,9 @@ function WorkloadLane({
         <span>{lane.quality ?? '-'}</span>
         <span>{lane.backend ?? 'backend -'}</span>
         <span>
-          {doneCount}/{tileTotal} {grid.countLabel}
+          {doneCount}/{cellTotal} {grid.countLabel}
         </span>
-        <span>{lastTileMs === null ? '-' : `${lastTileMs.toFixed(1)} ms`}</span>
+        <span>{lastCellMs === null ? '-' : `${lastCellMs.toFixed(1)} ms`}</span>
         <span>drop {lane.dropped}</span>
       </div>
     </div>
@@ -364,28 +364,31 @@ function applyTelemetry(
       quality: msg.quality,
       backend: msg.backend,
       maxIter: msg.max_iter,
-      tileCols: msg.tile_cols,
-      tileRows: msg.tile_rows,
-      tiles: {},
+      cellCols: msg.chunk_cols ?? 4,
+      cellRows: msg.chunk_rows ?? 4,
+      cells: {},
     }
     return { ...current, lanes }
   }
 
-  if (msg.event === 'tile_done') {
+  if (msg.event === 'chunk_done' || msg.event === 'microtile_done') {
     const lanes = cloneLanes(current.lanes)
     const lane = lanes[msg.panel_id]
-    const order = Object.keys(lane.tiles).length + 1
+    const order = Object.keys(lane.cells).length + 1
+    const cellId = msg.event === 'chunk_done' ? msg.chunk_id : msg.microtile_id
+    const cellCols = msg.event === 'chunk_done' ? msg.chunk_cols : msg.microtile_cols
+    const cellRows = msg.event === 'chunk_done' ? msg.chunk_rows : msg.microtile_rows
     lanes[msg.panel_id] = {
       ...lane,
       status: 'rendering',
       frameSeq: msg.frame_seq,
       quality: msg.quality,
       backend: msg.backend,
-      tileCols: msg.tile_cols,
-      tileRows: msg.tile_rows,
-      tiles: {
-        ...lane.tiles,
-        [msg.tile_id]: {
+      cellCols: cellCols,
+      cellRows: cellRows,
+      cells: {
+        ...lane.cells,
+        [cellId]: {
           elapsedMs: msg.elapsed_ms,
           order,
           stage: msg.stage,
@@ -444,9 +447,9 @@ function makeInitialLanes(): Record<Panel, PanelWorkload> {
       quality: null,
       backend: null,
       maxIter: null,
-      tileCols: 4,
-      tileRows: 4,
-      tiles: {},
+      cellCols: 4,
+      cellRows: 4,
+      cells: {},
       lastFrameMs: null,
       dropped: 0,
     }
@@ -460,21 +463,21 @@ function cloneLanes(
   return { ...lanes }
 }
 
-function latestTileMs(lane: PanelWorkload): number | null {
-  let latest: TileProgress | null = null
-  for (const tile of Object.values(lane.tiles)) {
-    if (!latest || tile.order > latest.order) latest = tile
+function latestCellMs(lane: PanelWorkload): number | null {
+  let latest: CellProgress | null = null
+  for (const cell of Object.values(lane.cells)) {
+    if (!latest || cell.order > latest.order) latest = cell
   }
   return latest?.elapsedMs ?? null
 }
 
 function gridInfo(lane: PanelWorkload) {
-  if (lane.tileCols === 4 && lane.tileRows === 4) {
+  if (lane.cellCols === 4 && lane.cellRows === 4) {
     return {
       kind: 'render-chunk',
       title: '4 x 4 render chunks',
       meta: `${RENDER_CHUNK_PX} px chunks`,
-      map: `${RTL_TILES_PER_CHUNK_SIDE} x ${RTL_TILES_PER_CHUNK_SIDE} RTL tiles per chunk`,
+      map: `${RTL_MICROTILES_PER_CHUNK_SIDE} x ${RTL_MICROTILES_PER_CHUNK_SIDE} microtiles per chunk`,
       cellLabel: 'chunk',
       countLabel: 'chunks',
       metricLabel: 'Chunks',
@@ -482,28 +485,28 @@ function gridInfo(lane: PanelWorkload) {
     }
   }
 
-  if (lane.tileCols === 16 && lane.tileRows === 16) {
+  if (lane.cellCols === 16 && lane.cellRows === 16) {
     return {
-      kind: 'rtl-tile',
-      title: '16 x 16 RTL tiles',
-      meta: `${RTL_TILE_PX} px RTL tiles`,
-      map: `one ${RENDER_CHUNK_PX} px sixteenth`,
-      cellLabel: 'rtl tile',
-      countLabel: 'rtl tiles',
-      metricLabel: 'RTL tiles',
+      kind: 'rtl-microtile',
+      title: '16 x 16 RTL microtiles',
+      meta: `${RTL_MICROTILE_PX} px microtiles`,
+      map: `inside one ${RENDER_CHUNK_PX} px chunk`,
+      cellLabel: 'rtl microtile',
+      countLabel: 'microtiles',
+      metricLabel: 'Microtiles',
       showElapsedInCell: false,
     }
   }
 
   return {
     kind: 'generic',
-    title: `${lane.tileCols} x ${lane.tileRows} telemetry cells`,
-    meta: `${lane.tileCols} x ${lane.tileRows} cells`,
+    title: `${lane.cellCols} x ${lane.cellRows} telemetry cells`,
+    meta: `${lane.cellCols} x ${lane.cellRows} cells`,
     map: 'backend-defined grid',
     cellLabel: 'cell',
     countLabel: 'cells',
     metricLabel: 'Cells',
-    showElapsedInCell: lane.tileCols * lane.tileRows <= 16,
+    showElapsedInCell: lane.cellCols * lane.cellRows <= 16,
   }
 }
 
@@ -518,8 +521,8 @@ function clampPosition(position: { x: number; y: number }): { x: number; y: numb
 
 function compactStatus(snapshot: WorkloadSnapshot): string {
   const active = snapshot.lanes[snapshot.activePanel]
-  const total = active.tileCols * active.tileRows
-  const done = Object.keys(active.tiles).length
+  const total = active.cellCols * active.cellRows
+  const done = Object.keys(active.cells).length
   const grid = gridInfo(active)
   return `${PANEL_LABEL[snapshot.activePanel]} ${done}/${total} ${grid.countLabel}`
 }

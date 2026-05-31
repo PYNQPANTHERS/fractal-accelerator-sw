@@ -24,11 +24,11 @@ Command parse_command(const std::string& line) {
         return Ping{};
     }
 
-    if (cmd == "render_tile") {
+    if (cmd == "render_chunk") {
         // Required numeric fields.
         try {
-            RenderTile r;
-            r.tile_id       = j.at("tile_id").get<int>();
+            RenderChunk r;
+            r.chunk_id       = j.at("chunk_id").get<int>();
             r.pan_x         = j.at("pan_x").get<double>();
             r.pan_y         = j.at("pan_y").get<double>();
             r.zoom          = j.at("zoom").get<int>();
@@ -37,8 +37,8 @@ Command parse_command(const std::string& line) {
             r.julia_c_imag  = j.value("julia_c_imag", 0.0);
             r.max_iter      = j.value("max_iter", 256);
 
-            if (r.tile_id < 0 || r.tile_id > 15) {
-                return ParseError{"tile_id must be 0..15"};
+            if (r.chunk_id < 0 || r.chunk_id > 15) {
+                return ParseError{"chunk_id must be 0..15"};
             }
             if (r.fractal_type != "mandelbrot" &&
                 r.fractal_type != "julia" &&
@@ -47,7 +47,7 @@ Command parse_command(const std::string& line) {
             }
             return r;
         } catch (const json::exception& e) {
-            return ParseError{std::string("render_tile fields: ") + e.what()};
+            return ParseError{std::string("render_chunk fields: ") + e.what()};
         }
     }
 

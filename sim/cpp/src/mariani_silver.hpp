@@ -1,4 +1,4 @@
-// Mariani-Silver fractal tile renderer.
+// Mariani-Silver fractal chunk renderer.
 //
 // Recursive quadtree subdivision. Instead of iterating every pixel,
 // we sample the perimeter of a sub-rectangle and check whether all
@@ -24,10 +24,10 @@ namespace fractal_sim {
 // larger leaves miss small fractal features.
 constexpr int MS_LEAF_PX = 8;
 
-// Same signature/output format as compute_tile (which we keep around
-// for the preview path and for fallback). Renders one 256x256 tile.
-void compute_tile_mariani(TileBuffer& out,
-                          int tile_id,
+// Same signature/output format as compute_chunk (which we keep around
+// for the preview path and for fallback). Renders one 256x256 chunk.
+void compute_chunk_mariani(ChunkBuffer& out,
+                          int chunk_id,
                           double pan_x,
                           double pan_y,
                           int zoom,

@@ -12,9 +12,9 @@ namespace {
 // buffer. Captured once and passed by reference into the recursion so
 // the hot path stays small.
 struct RenderCtx {
-    TileBuffer&        out;
-    int                tile_col_origin;   // px-relative to image
-    int                tile_row_origin;
+    ChunkBuffer&        out;
+    int                chunk_col_origin;   // px-relative to image
+    int                chunk_row_origin;
     double             pixel_size;        // complex-plane units per pixel
     double             centre_off;        // IMAGE_PIXELS / 2.0
     double             pan_x;
@@ -26,12 +26,12 @@ struct RenderCtx {
     double             julia_c_imag;
 };
 
-// Map a tile-local pixel coordinate (0..255) to its complex-plane point.
+// Map a chunk-local pixel coordinate (0..255) to its complex-plane point.
 inline void pixel_to_complex(const RenderCtx& ctx,
                              int px, int py,
                              double& cx, double& cy) {
-    cx = (ctx.tile_col_origin + px - ctx.centre_off) * ctx.pixel_size + ctx.pan_x;
-    cy = (ctx.tile_row_origin + py - ctx.centre_off) * ctx.pixel_size + ctx.pan_y;
+    cx = (ctx.chunk_col_origin + px - ctx.centre_off) * ctx.pixel_size + ctx.pan_x;
+    cy = (ctx.chunk_row_origin + py - ctx.centre_off) * ctx.pixel_size + ctx.pan_y;
 }
 
 // Compute one pixel's band. Mandelbrot/Julia branch is inlined here so
@@ -58,8 +58,8 @@ inline uint8_t pixel_band(const RenderCtx& ctx, int px, int py) {
 
 // Write a 4-bit band into the nibble-packed output buffer at (px, py).
 // Same packing as the brute-force kernel.
-inline void write_pixel(TileBuffer& out, int px, int py, uint8_t band) {
-    const int linear = py * TILE_PIXELS + px;
+inline void write_pixel(ChunkBuffer& out, int px, int py, uint8_t band) {
+    const int linear = py * CHUNK_PIXELS + px;
     const std::size_t byte_idx = linear / 2;
     if (px % 2 == 0) {
         const auto cur = out[byte_idx];
@@ -72,7 +72,7 @@ inline void write_pixel(TileBuffer& out, int px, int py, uint8_t band) {
 }
 
 // Fill a rectangle (x0, y0)..(x0+w, y0+h) with a uniform band.
-inline void fill_rect(TileBuffer& out, int x0, int y0,
+inline void fill_rect(ChunkBuffer& out, int x0, int y0,
                       int w, int h, uint8_t band) {
     for (int py = y0; py < y0 + h; ++py) {
         for (int px = x0; px < x0 + w; ++px) {
@@ -165,8 +165,8 @@ void recurse(const RenderCtx& ctx, int x0, int y0, int w, int h) {
 
 }  // anonymous namespace
 
-void compute_tile_mariani(TileBuffer& out,
-                          int tile_id,
+void compute_chunk_mariani(ChunkBuffer& out,
+                          int chunk_id,
                           double pan_x,
                           double pan_y,
                           int zoom,
@@ -181,10 +181,10 @@ void compute_tile_mariani(TileBuffer& out,
     const double pixel_size = window / VISIBLE_PIXELS;
     const double centre_off = IMAGE_PIXELS / 2.0;
 
-    const int tile_col   = tile_id % TILES_PER_SIDE;
-    const int tile_row   = tile_id / TILES_PER_SIDE;
-    const int col_origin = tile_col * TILE_PIXELS;
-    const int row_origin = tile_row * TILE_PIXELS;
+    const int chunk_col   = chunk_id % CHUNKS_PER_SIDE;
+    const int chunk_row   = chunk_id / CHUNKS_PER_SIDE;
+    const int col_origin = chunk_col * CHUNK_PIXELS;
+    const int row_origin = chunk_row * CHUNK_PIXELS;
 
     RenderCtx ctx {
         out,
@@ -196,7 +196,7 @@ void compute_tile_mariani(TileBuffer& out,
         julia_c_real, julia_c_imag,
     };
 
-    recurse(ctx, 0, 0, TILE_PIXELS, TILE_PIXELS);
+    recurse(ctx, 0, 0, CHUNK_PIXELS, CHUNK_PIXELS);
 }
 
 }  // namespace fractal_sim

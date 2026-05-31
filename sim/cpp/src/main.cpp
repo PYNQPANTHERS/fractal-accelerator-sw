@@ -22,9 +22,9 @@ using namespace fractal_sim;
 int main() {
     std::cerr << "fractal_sim: ready" << std::endl;
 
-    // One buffer per tile for parallel rendering. Allocated once, reused.
-    const int N_TILES = TILES_PER_SIDE * TILES_PER_SIDE;
-    std::vector<TileBuffer> tile_bufs(N_TILES);
+    // One buffer per chunk for parallel rendering. Allocated once, reused.
+    const int N_CHUNKS = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE;
+    std::vector<ChunkBuffer> chunk_bufs(N_CHUNKS);
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -38,49 +38,49 @@ int main() {
                 std::cerr << "fractal_sim: ping" << std::endl;
                 write_frame(MessageType::Pong, 0, nullptr, 0);
 
-            } else if constexpr (std::is_same_v<T, RenderTile>) {
-                std::cerr << "fractal_sim: render_tile id=" << c.tile_id
+            } else if constexpr (std::is_same_v<T, RenderChunk>) {
+                std::cerr << "fractal_sim: render_chunk id=" << c.chunk_id
                           << " zoom=" << c.zoom
                           << " type=" << c.fractal_type << std::endl;
-                compute_tile(tile_bufs[c.tile_id], c.tile_id,
+                compute_chunk(chunk_bufs[c.chunk_id], c.chunk_id,
                              c.pan_x, c.pan_y, c.zoom, c.max_iter,
                              c.fractal_type, c.julia_c_real, c.julia_c_imag);
-                write_frame(MessageType::Tile,
-                            static_cast<uint8_t>(c.tile_id),
-                            tile_bufs[c.tile_id].data(),
-                            static_cast<uint32_t>(tile_bufs[c.tile_id].size()));
+                write_frame(MessageType::Chunk,
+                            static_cast<uint8_t>(c.chunk_id),
+                            chunk_bufs[c.chunk_id].data(),
+                            static_cast<uint32_t>(chunk_bufs[c.chunk_id].size()));
 
             } else if constexpr (std::is_same_v<T, RenderImage>) {
                 std::cerr << "fractal_sim: render_image zoom=" << c.zoom
                           << " type=" << c.fractal_type << std::endl;
 
-                // Compute all tiles in parallel — each tile is independent.
-                // One thread per tile; tiles are small so 16 threads is fine.
-                // Workers notify the main thread as each tile completes. The
+                // Compute all chunks in parallel; each chunk is independent.
+                // One thread per chunk is fine for the current 4x4 image.
+                // Workers notify the main thread as each chunk completes. The
                 // main thread remains the only stdout writer, matching the
-                // future FPGA shape: tile-done events arrive independently,
-                // but the PS-side driver serialises them onto the wire.
+                // future PS shape: microtile completions are aggregated into
+                // chunks before the image stream is serialised onto the wire.
                 std::mutex done_mutex;
                 std::condition_variable done_cv;
-                std::queue<int> done_tiles;
+                std::queue<int> done_chunks;
 
                 std::vector<std::thread> threads;
-                threads.reserve(N_TILES);
-                for (int tile_id = 0; tile_id < N_TILES; ++tile_id) {
-                    threads.emplace_back([&, tile_id]() {
+                threads.reserve(N_CHUNKS);
+                for (int chunk_id = 0; chunk_id < N_CHUNKS; ++chunk_id) {
+                    threads.emplace_back([&, chunk_id]() {
                         // Full quality goes through Mariani-Silver; preview
                         // stays on the brute-force subsampled path because
                         // M-S only helps on uniform regions and preview is
                         // already so cheap that quadtree overhead would
                         // erode the gain.
                         if (c.preview) {
-                            compute_tile(tile_bufs[tile_id], tile_id,
+                            compute_chunk(chunk_bufs[chunk_id], chunk_id,
                                          c.pan_x, c.pan_y, c.zoom, c.max_iter,
                                          c.fractal_type,
                                          c.julia_c_real, c.julia_c_imag,
                                          true);
                         } else {
-                            compute_tile_mariani(tile_bufs[tile_id], tile_id,
+                            compute_chunk_mariani(chunk_bufs[chunk_id], chunk_id,
                                                  c.pan_x, c.pan_y, c.zoom,
                                                  c.max_iter,
                                                  c.fractal_type,
@@ -89,23 +89,23 @@ int main() {
                         }
                         {
                             std::lock_guard<std::mutex> lock(done_mutex);
-                            done_tiles.push(tile_id);
+                            done_chunks.push(chunk_id);
                         }
                         done_cv.notify_one();
                     });
                 }
 
-                for (int written = 0; written < N_TILES; ++written) {
+                for (int written = 0; written < N_CHUNKS; ++written) {
                     std::unique_lock<std::mutex> lock(done_mutex);
-                    done_cv.wait(lock, [&]() { return !done_tiles.empty(); });
-                    const int tile_id = done_tiles.front();
-                    done_tiles.pop();
+                    done_cv.wait(lock, [&]() { return !done_chunks.empty(); });
+                    const int chunk_id = done_chunks.front();
+                    done_chunks.pop();
                     lock.unlock();
 
-                    write_frame(MessageType::Tile,
-                                static_cast<uint8_t>(tile_id),
-                                tile_bufs[tile_id].data(),
-                                static_cast<uint32_t>(tile_bufs[tile_id].size()));
+                    write_frame(MessageType::Chunk,
+                                static_cast<uint8_t>(chunk_id),
+                                chunk_bufs[chunk_id].data(),
+                                static_cast<uint32_t>(chunk_bufs[chunk_id].size()));
                 }
                 for (auto& t : threads) t.join();
 

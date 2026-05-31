@@ -1,7 +1,7 @@
 // Shared internal kernel: iteration + band remap.
 //
-// Both the brute-force compute_tile (iterate.cpp) and the Mariani-
-// Silver compute_tile_mariani (mariani_silver.cpp) use these inlines.
+// Both the brute-force compute_chunk (iterate.cpp) and the Mariani-
+// Silver compute_chunk_mariani (mariani_silver.cpp) use these inlines.
 // Defined in a header so each TU can inline the hot loop.
 
 #pragma once

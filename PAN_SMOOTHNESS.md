@@ -50,12 +50,12 @@ so Julia could morph live as Mandelbrot pans.
 **Reported**: while a new render arrives, half the panel shows the
 old image and half shows the new — flicker.
 
-**Cause**: tiles painted directly into the visible canvas as they
+**Cause**: chunks painted directly into the visible canvas as they
 arrive. The user sees the half-painted frame.
 
-**Change**: double-buffered painter (`tilePainter.ts`). Off-screen
-staging canvas accumulates tiles; visible canvas only updates via
-`drawImage(staging, …)` once all 16 tiles for a `frame_seq` have
+**Change**: double-buffered painter (`chunkPainter.ts`). Off-screen
+staging canvas accumulates chunks; visible canvas only updates via
+`drawImage(staging, …)` once all 16 chunks for a `frame_seq` have
 landed. Cost: one ~0.2 ms bitblit per render.
 
 ---
@@ -240,7 +240,7 @@ Sim slows ~2.25× per render (more compute). On FPGA day this is mostly
 free because Mariani-Silver prunes large in-set / far-exterior regions
 in the edge sixteenths.
 
-Wire format unchanged (`tile_id` is u8, fits 0..35; `width`/`height`
+Wire format unchanged (`chunk_id` is u8, fits 0..35; `width`/`height`
 in the binary header already self-describe).
 
 ## v11 — shrink margin + add preview-quality path
@@ -259,9 +259,9 @@ render = lower fps for everyone.
    to 1.56× of the original. Still enough margin to absorb most
    flicks; not enough to bleed throughput on small pans.
 
-2. **Preview quality path**. The sim's `compute_tile` now takes a
+2. **Preview quality path**. The sim's `compute_chunk` now takes a
    `preview` flag. In preview mode it computes 1 in 4 pixels (one
-   per 2×2 block) and broadcasts. ~3× faster per tile. Slightly
+   per 2×2 block) and broadcasts. ~3× faster per chunk. Slightly
    blocky but the user only sees it during active drag. Client
    sends `quality: "preview"` mid-drag and `quality: "full"` on
    release / wheel-zoom. Server propagates quality to the Julia
@@ -288,7 +288,7 @@ quality, plus **predictive prefetch**:
 - When a render lands mid-drag with measurable velocity
   (>0.2 px/ms), `notifyFrameApplied` doesn't sit idle waiting for
   the next pointermove. Instead it speculatively requests a render
-  at `worldPos + velocity × 150 ms`. That tile set arrives roughly
+  at `worldPos + velocity × 150 ms`. That chunk set arrives roughly
   when the cursor gets there.
 - Backpressure: speculative requests share the same in-flight slot
   as everything else. A *real* pointermove during the speculative
@@ -354,7 +354,7 @@ around whole-frame Mandelbrot work in the simulator.
 
 ## Current next checks if jitter returns
 
-- Use the FPS overlay plus Workload Inspector together: if tile latency is flat
+- Use the FPS overlay plus Workload Inspector together: if chunk latency is flat
   but request-to-display latency spikes, the issue is frontend/paint/backpressure
   rather than backend compute.
 - Compare minimaps on vs off. Minimap images are frontend overview caches now,

@@ -21,15 +21,15 @@ Produces `build/fractal_sim`.
 ./build/fractal_sim
 ```
 
-Reads JSON commands from stdin, writes framed binary tile responses to stdout,
+Reads JSON commands from stdin, writes framed binary chunk responses to stdout,
 and logs diagnostics to stderr. Press Ctrl-D to close stdin and exit.
 
 ## Commands
 
 - `ping`: returns a pong frame.
-- `render_tile`: renders one 256 x 256 tile.
-- `render_image`: renders the current 4 x 4 image, 16 tiles total, and streams
-  tile frames as worker threads complete.
+- `render_chunk`: renders one 256 x 256 chunk.
+- `render_image`: renders the current 4 x 4 image, 16 browser chunks total, and
+  streams chunk frames as worker threads complete.
 
 ## Render Paths
 
@@ -44,10 +44,10 @@ and logs diagnostics to stderr. Press Ctrl-D to close stdin and exit.
 The simulator intentionally behaves like the future PS/PL boundary:
 
 - one render config enters the backend
-- independent tile workers complete in their own order
-- the PS-side layer observes tile id plus completion time
-- the frontend receives the same tile payload shape regardless of backend
+- independent chunk workers complete in their own order
+- the PS-side layer observes chunk id plus completion time
+- the frontend receives the same 256 x 256 chunk payload shape regardless of backend
 
 When the FPGA driver replaces this process, the completion source changes from
-stdout frames to PL tile-done / transfer-complete status, but the server and
+stdout frames to PL microtile-complete / transfer-complete status, but the server and
 frontend contract should remain the same.

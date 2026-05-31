@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the WebSocket render server.
 #
-# The server speaks JSON ↔ binary tiles on ws://localhost:8765 by default
+# The server speaks JSON ↔ binary chunks on ws://localhost:8765 by default
 # and spawns the C++ sim under the hood. Override via env:
 #   SERVER_HOST=0.0.0.0 SERVER_PORT=9000 scripts/run-server.sh
 #
