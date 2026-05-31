@@ -73,30 +73,6 @@ def _mandelbrot_minimap_config() -> RenderConfig:
     )
 
 
-def _julia_minimap_config(source: RenderConfig) -> RenderConfig:
-    return RenderConfig(
-        pan_x=0.0,
-        pan_y=0.0,
-        zoom=0,
-        fractal_type="julia",
-        julia_c_real=source.julia_c_real,
-        julia_c_imag=source.julia_c_imag,
-        max_iter=_MINIMAP_MAX_ITER,
-        preview=source.preview,
-    )
-
-
-def _julia_minimap_needs_render(
-    existing: RenderConfig,
-    source: RenderConfig,
-) -> bool:
-    return (
-        existing.julia_c_real != source.julia_c_real
-        or existing.julia_c_imag != source.julia_c_imag
-        or (existing.preview and not source.preview)
-    )
-
-
 def _browser_can_receive(ws: WebSocketServerProtocol) -> bool:
     """True if the browser's send buffer is below the backpressure threshold."""
     try:
@@ -275,11 +251,9 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
         julia_c_real=-0.7, julia_c_imag=0.27,
     )
     _default_mandelbrot_minimap = _mandelbrot_minimap_config()
-    _default_julia_minimap = _julia_minimap_config(_default_julia)
     panel_state[PANEL_MANDELBROT_MAIN]    = _default_mandelbrot
     panel_state[PANEL_JULIA_MAIN]         = _default_julia
     queue_minimap(PANEL_MANDELBROT_MINIMAP, _default_mandelbrot_minimap, frame_seq=0)
-    queue_minimap(PANEL_JULIA_MINIMAP,      _default_julia_minimap,      frame_seq=0)
 
     async def recv_loop() -> None:
         nonlocal minimaps_enabled, telemetry_enabled
@@ -335,51 +309,6 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                             scheduler,
                             telemetry_enabled,
                         )
-                    existing_julia_minimap = panel_state.get(
-                        PANEL_JULIA_MINIMAP,
-                        _default_julia_minimap,
-                    )
-                    julia_minimap_source = panel_state.get(
-                        PANEL_JULIA_MAIN,
-                        existing_julia,
-                    )
-                    if _julia_minimap_needs_render(
-                        existing_julia_minimap,
-                        julia_minimap_source,
-                    ):
-                        julia_minimap_cfg = _julia_minimap_config(
-                            julia_minimap_source
-                        )
-                        queue_minimap(
-                            PANEL_JULIA_MINIMAP,
-                            julia_minimap_cfg,
-                            msg.frame_seq,
-                        )
-                        await _send_scheduler_snapshot(
-                            ws,
-                            scheduler,
-                            telemetry_enabled,
-                        )
-                elif msg.panel_id == PANEL_JULIA_MAIN:
-                    existing_julia_minimap = panel_state.get(
-                        PANEL_JULIA_MINIMAP,
-                        _default_julia_minimap,
-                    )
-                    if _julia_minimap_needs_render(
-                        existing_julia_minimap,
-                        cfg,
-                    ):
-                        julia_minimap_cfg = _julia_minimap_config(cfg)
-                        queue_minimap(
-                            PANEL_JULIA_MINIMAP,
-                            julia_minimap_cfg,
-                            msg.frame_seq,
-                        )
-                        await _send_scheduler_snapshot(
-                            ws,
-                            scheduler,
-                            telemetry_enabled,
-                        )
 
             elif isinstance(msg, SetModeMessage):
                 scheduler.set_mode(msg.mode)
@@ -395,13 +324,6 @@ async def _handle(ws: WebSocketServerProtocol) -> None:
                     queue_minimap(
                         PANEL_MANDELBROT_MINIMAP,
                         _mandelbrot_minimap_config(),
-                        msg.frame_seq,
-                    )
-                    queue_minimap(
-                        PANEL_JULIA_MINIMAP,
-                        _julia_minimap_config(
-                            panel_state.get(PANEL_JULIA_MAIN, _default_julia)
-                        ),
                         msg.frame_seq,
                     )
                 else:

@@ -191,12 +191,20 @@ export default function App() {
     },
     [fps, mandelbrotView.notifyFrameApplied],
   )
+  const syncJuliaMinimap = useCallback(() => {
+    const main = paintersRef.current[Panel.JuliaMain]
+    const mini = paintersRef.current[Panel.JuliaMini]
+    if (main && mini) {
+      mini.copyFrom(main.canvas)
+    }
+  }, [])
   const onJuliaFrame = useCallback(
     (seq: number) => {
       fps.notePaint(seq, Panel.JuliaMain)
       juliaView.notifyFrameApplied()
+      syncJuliaMinimap()
     },
-    [fps, juliaView.notifyFrameApplied],
+    [fps, juliaView.notifyFrameApplied, syncJuliaMinimap],
   )
 
   // Stable ref callbacks — without `useMemo`, every App re-render (e.g. mode
@@ -221,8 +229,8 @@ export default function App() {
     [],
   )
   const registerJuliaMini = useMemo(
-    () => makeRegister(paintersRef, Panel.JuliaMini),
-    [],
+    () => makeRegister(paintersRef, Panel.JuliaMini, null, syncJuliaMinimap),
+    [syncJuliaMinimap],
   )
 
   return (
@@ -282,6 +290,7 @@ export default function App() {
           canvasRef={registerJuliaMain}
           minimapCanvasRef={registerJuliaMini}
           minimapCenterX={JULIA_INITIAL.panX}
+          showMinimapViewRect={false}
           showMinimap={debugFlags.minimaps}
           formatCoord={(v) =>
             `c = ${formatNumber(juliaCRef.current.real)} + ${formatNumber(juliaCRef.current.imag)}i  ·  ×${zoomLabel(v.zoom)}`
@@ -329,6 +338,7 @@ function makeRegister(
   paintersRef: React.MutableRefObject<Partial<Record<Panel, TilePainter>>>,
   panel: Panel,
   onFrameComplete: ((seq: number) => void) | null = null,
+  onReady: (() => void) | null = null,
 ) {
   return (canvas: HTMLCanvasElement | null) => {
     if (!canvas) {
@@ -339,12 +349,14 @@ function makeRegister(
     if (existing?.canvas === canvas) {
       // Same canvas across re-renders: just update the callback.
       existing.onFrameComplete = onFrameComplete
+      onReady?.()
       return
     }
     const painter = new TilePainter(canvas)
     painter.onFrameComplete = onFrameComplete
     painter.clear()
     paintersRef.current[panel] = painter
+    onReady?.()
   }
 }
 
@@ -356,6 +368,7 @@ function Viewport({
   canvasRef,
   minimapCanvasRef,
   minimapCenterX,
+  showMinimapViewRect = true,
   showMinimap,
   formatCoord,
 }: {
@@ -366,6 +379,7 @@ function Viewport({
   canvasRef: (canvas: HTMLCanvasElement | null) => void
   minimapCanvasRef: (canvas: HTMLCanvasElement | null) => void
   minimapCenterX: number
+  showMinimapViewRect?: boolean
   showMinimap: boolean
   formatCoord: (v: ViewState) => string
 }) {
@@ -389,10 +403,12 @@ function Viewport({
             height={IMAGE_PX}
             ref={minimapCanvasRef}
           />
-          <div
-            className="minimap-viewrect"
-            style={viewRectStyle(view, minimapCenterX)}
-          />
+          {showMinimapViewRect && (
+            <div
+              className="minimap-viewrect"
+              style={viewRectStyle(view, minimapCenterX)}
+            />
+          )}
           <span className="minimap-label">{name}</span>
         </div>
       )}

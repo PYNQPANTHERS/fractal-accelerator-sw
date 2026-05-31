@@ -50,7 +50,8 @@ Browser -> server JSON:
 - `set_view`: panel id, frame sequence, pan, zoom, fractal type, Julia c,
   `max_iter`, `quality`, and `interaction`.
 - `set_mode`: `performance` or `live_evolution`.
-- `set_minimaps`: enables/disables minimap render jobs.
+- `set_minimaps`: enables/disables the Mandelbrot minimap render job. The Julia
+  minimap is a frontend thumbnail of the main Julia canvas.
 - `set_telemetry`: enables/disables Workload Inspector telemetry.
 
 Server -> browser binary:

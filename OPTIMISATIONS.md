@@ -128,14 +128,14 @@ Last updated: 2026-05-30.
 - **Why**: Avoids duplicate Julia work during centre-anchored zoom.
 - **Status**: **Load-bearing**.
 
-### Optional Real Minimap Jobs
+### Optional Minimap Work
 
 - **Where**: `server/main.py`, `web/src/DebugPanel.tsx`
-- **What**: Minimaps are genuine low-priority render jobs and can be toggled
-  off.
-- **Why**: A minimap is a different camera, so reusing main-panel pixels would
-  be wrong except at matching zoom/pan. The toggle gives a clean benchmark path
-  with no minimap load.
+- **What**: The Mandelbrot minimap is a genuine low-priority overview render.
+  The Julia minimap mirrors the current main Julia canvas as a live thumbnail.
+- **Why**: Mandelbrot's overview is stable and useful as a separate camera.
+  Julia's set changes whenever Mandelbrot's centre changes, so a separate
+  backend minimap easily goes stale and competes with the main Julia render.
 - **Status**: **Keep**.
 
 ### Telemetry Only When Needed
@@ -284,8 +284,9 @@ Last updated: 2026-05-30.
 - **Full-quality only during active navigation**: clean image, but lower FPS
   ceiling. Current Performance mode uses preview for active interaction and full
   quality for the settled frame.
-- **Treating minimaps as reused main data**: rejected because minimaps are
-  different cameras. They are real jobs, but optional.
+- **Treating both minimaps as reused main data**: Mandelbrot still needs a real
+  overview camera. Julia is now the exception: it reuses the main canvas so it
+  cannot drift from the current Julia render.
 
 ## Benchmark Plan
 

@@ -82,6 +82,14 @@ export class TilePainter {
     this.stagingCtx.fillStyle = this.displayCtx.fillStyle
     this.stagingCtx.fillRect(0, 0, IMAGE_PX, IMAGE_PX)
   }
+
+  /** Mirror another full-resolution canvas into this painter. */
+  copyFrom(source: HTMLCanvasElement): void {
+    this.displayCtx.imageSmoothingEnabled = false
+    this.stagingCtx.imageSmoothingEnabled = false
+    this.displayCtx.drawImage(source, 0, 0, this.canvas.width, this.canvas.height)
+    this.stagingCtx.drawImage(source, 0, 0, IMAGE_PX, IMAGE_PX)
+  }
 }
 
 /**
