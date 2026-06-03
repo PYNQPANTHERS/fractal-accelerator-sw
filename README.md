@@ -35,9 +35,9 @@ Two large panels are rendered side by side:
 - Main image is **1024 x 1024**.
 - Browser-facing chunk geometry is **4 x 4**, 16 chunks total, each
   **256 x 256**.
-- The FPGA path should expose finer **16 x 16** RTL microtile completion to the
+- The FPGA path should expose finer **16 x 16** RTL tile completion to the
   Workload Inspector through telemetry, while the PS Chunk Streamer aggregates
-  those microtiles into the existing 256 x 256 browser chunks.
+  those tiles into the existing 256 x 256 browser chunks.
 - Pixel format is nibble-packed **4-bit palette indices**.
 - There is no active 5x5/6x6 pre-rendered margin and no predictive prefetch in
   the current fast path. Those were tested and rolled back because the extra

@@ -21,7 +21,7 @@ later call a PYNQ/FPGA driver instead.
 - Drive `sim/renderer.py` now, or later `driver/pynq_driver.py`.
 - Emit optional scheduler/chunk/render telemetry for the Workload Inspector.
 - Pack the 16 browser chunks for a render into one binary WebSocket bundle.
-- In the FPGA path, aggregate 16 x 16 RTL microtile completions into 256 x 256
+- In the FPGA path, aggregate 16 x 16 RTL tile completions into 256 x 256
   browser chunks through the PS Chunk Streamer.
 
 ## Run
@@ -58,7 +58,7 @@ Server -> browser binary:
 
 - `MSG_CHUNK_BUNDLE`: one WebSocket binary frame containing all 16 chunk
   payloads for one panel/frame sequence. These payloads are browser-facing
-  256 x 256 chunks, not individual 16 x 16 RTL microtiles.
+  256 x 256 chunks, not individual 16 x 16 RTL tiles.
 - `MSG_CHUNK`: supported parser format for a single 256 x 256 chunk.
 
 Server -> browser JSON telemetry, only when enabled:
@@ -66,7 +66,7 @@ Server -> browser JSON telemetry, only when enabled:
 - `scheduler`: mode, active panel, interacting panel, pending jobs.
 - `render_started`: panel, frame sequence, quality, `max_iter`, backend.
 - `chunk_done`: chunk id and elapsed time as observed by the backend boundary.
-  Future FPGA telemetry can additionally expose the 16 x 16 RTL microtile grid;
+  Future FPGA telemetry can additionally expose the 16 x 16 RTL tile grid;
   it does not have to match the image payload granularity.
 - `render_finished`: total render latency and chunk count.
 - `render_dropped`: server-side backpressure drop.
@@ -77,10 +77,10 @@ Client-side stale frame drops are also fed into the same inspector state.
 
 The server should keep seeing one `RenderConfig` in and browser chunks out. With
 the simulator, completion currently arrives as chunk-shaped stdout frames. With
-hardware, completion arrives as 16 x 16 RTL microtile readiness inside a
-256 x 256 chunk. The PS Chunk Streamer should accumulate those microtiles into
+hardware, completion arrives as 16 x 16 RTL tile readiness inside a
+256 x 256 chunk. The PS Chunk Streamer should accumulate those tiles into
 a chunk buffer, flush browser chunks through the existing binary protocol, and
-emit per-microtile telemetry only while the Workload Inspector is open.
+emit per-tile telemetry only while the Workload Inspector is open.
 
 See [../FPGA_CHUNK_STREAMING.md](../FPGA_CHUNK_STREAMING.md) for the full
 granularity contract.

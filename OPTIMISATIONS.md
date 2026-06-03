@@ -17,7 +17,7 @@ Last updated: 2026-05-30.
   request a subsampled preview kernel from the same simulator. It is not a
   second simulator implementation.
 - **4 x 4 browser chunk grid**: 16 chunks per render, each 256 x 256, giving a
-  1024 x 1024 image. The FPGA path can report finer 16 x 16 RTL microtile telemetry
+  1024 x 1024 image. The FPGA path can report finer 16 x 16 RTL tile telemetry
   without changing this image protocol.
 - **No active prefetch margin**: 5x5, 6x6, and 7x7 margin experiments were
   tried and rolled back because extra chunk work lowered the frame ceiling and
@@ -151,16 +151,16 @@ Last updated: 2026-05-30.
 ### PS Chunk Streamer Aggregation
 
 - **Where**: future `driver/` FPGA path.
-- **What**: The PS Chunk Streamer accumulates 16 x 16 RTL microtile completions into
+- **What**: The PS Chunk Streamer accumulates 16 x 16 RTL tile completions into
   256 x 256 chunk buffers, then flushes those chunks through the existing
   browser image protocol.
-- **Why**: The FPGA's natural completion unit is a 16 x 16 microtile, while the
+- **Why**: The FPGA's natural completion unit is a 16 x 16 RTL tile, while the
   browser's efficient paint/transport unit is a 256 x 256 chunk. Keeping the PS
   as the explicit aggregation point preserves wire optimisations and lets the
   Workload Inspector show true hardware readiness through separate telemetry.
 - **Status**: **Design contract for FPGA integration**. Prefer full-chunk flushes
   for settled renders; consider short timeout flushes during interaction so a
-  slow microtile does not stall visible progress.
+  slow RTL tile does not stall visible progress.
 
 ### Bundled Binary Chunk Sends
 
@@ -268,8 +268,8 @@ Last updated: 2026-05-30.
 - **What**: A draggable floating panel shows only the two main panels, with a
   compact collapsed summary and a backend-defined grid per lane. Simulator
   telemetry currently appears as 4 x 4 browser chunks; FPGA telemetry can appear
-  as the 16 x 16 RTL microtile grid.
-- **Why**: Lets us inspect scheduling and true hardware microtile completion while
+  as the 16 x 16 RTL tile grid.
+- **Why**: Lets us inspect scheduling and true hardware tile completion while
   still panning and zooming the main UI.
 - **Status**: **Keep**. This is a differentiating frontend feature and maps
   directly to future `microtile_id` + `microtile_done` PL status.
@@ -306,6 +306,6 @@ and record:
 - simulator backend vs FPGA backend once PL is connected
 
 For the FPGA backend, the Workload Inspector telemetry should be fed from the
-PS driver after it observes microtile completion or transfer-complete status
+PS driver after it observes RTL tile completion or transfer-complete status
 bits. The frontend does not need a redesign for that; only the backend telemetry
 source changes.

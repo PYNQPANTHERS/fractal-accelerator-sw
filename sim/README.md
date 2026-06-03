@@ -43,7 +43,7 @@ of stdin/stdout.
 The full-image path computes all 16 browser chunks in parallel and streams each
 chunk frame back as its worker completes. This gives realistic chunk-completion
 order for the Workload Inspector today. The future FPGA path can feed finer
-16 x 16 RTL microtile telemetry separately while the PS Chunk Streamer aggregates
+16 x 16 RTL tile telemetry separately while the PS Chunk Streamer aggregates
 image bytes into these same 256 x 256 chunks.
 
 ## From Python

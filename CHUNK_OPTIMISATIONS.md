@@ -1,7 +1,7 @@
 # Chunk-Path Optimisations
 
 The chunk concept exists at three independent layers: hardware completion
-(16x16 microtiles), browser transport (256x256 chunks bundled per frame), and
+(16x16 RTL tiles), browser transport (256x256 chunks bundled per frame), and
 telemetry. Keeping those layers separable opens up a small family of
 optimisations on the transport layer that pay off both today (simulator) and
 once the real FPGA path lands. See [FPGA_CHUNK_STREAMING.md](FPGA_CHUNK_STREAMING.md)
@@ -59,7 +59,7 @@ bundle." During an `interaction=active` pointer drag, flush each chunk
 the instant it's ready (`MSG_CHUNK`, single-chunk frame) instead of
 waiting for all 16. Settled / `interaction=final` renders stay bundled.
 
-**Why it's worth doing.** On the FPGA, microtile completions trickle in
+**Why it's worth doing.** On the FPGA, RTL tile completions trickle in
 over a few ms each. A 1024x1024 frame at 16 chunks could plausibly take
 30-60 ms end-to-end; sending the first ready chunk as soon as it lands
 turns that into visible progressive paint instead of one big swap at the
@@ -112,9 +112,9 @@ solid-encode cost, every subsequent frame sends nothing for that chunk.
 ## 4. Scheduler in-flight slot
 
 **Idea.** The scheduler today is "pick one job, render, return, pick
-again." With the FPGA the cycle "kick off render → first microtile back"
+again." With the FPGA the cycle "kick off render → first RTL tile back"
 is non-zero. If the user pans while panel A is mid-render, the scheduler
-should be able to cancel A's outstanding microtiles and re-issue from
+should be able to cancel A's outstanding RTL tiles and re-issue from
 the new viewport instead of letting A finish and only then noticing the
 new pan.
 
@@ -127,7 +127,7 @@ discards stragglers, but the FPGA still spent the time computing them.
 **Where to wire it.** [server/scheduler.py](server/scheduler.py) needs
 to model "frame in flight" alongside "pending." `next_job` returns
 either a new job or a preemption signal; the render loop checks
-preemption between microtile completions and bails out if the active
+preemption between RTL tile completions and bails out if the active
 panel's pending config has advanced.
 
 **Catch.** Real preemption needs FPGA-side support — the driver has to

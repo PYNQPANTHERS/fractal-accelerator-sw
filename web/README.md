@@ -59,4 +59,4 @@ main panels only:
 
 Today those chunk events come from the simulator. On hardware, chunk events
 should come from the PS Chunk Streamer after it has aggregated 16 x 16 RTL
-microtiles into a 256 x 256 browser chunk.
+tiles into a 256 x 256 browser chunk.

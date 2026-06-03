@@ -27,14 +27,14 @@ work from blocking the active panel, but the FPS ceiling rises only when the
 active render itself costs less.
 
 That maps well to the FPGA design: active navigation can use a lower iteration
-budget, coarser sampling, or microtile-priority/cancellation policy; the settled view
+budget, coarser sampling, or RTL-tile-priority/cancellation policy; the settled view
 then runs the full-quality path.
 
 ## Still Useful To Investigate
 
-- Hardware-side microtile priority or cancellation for stale background work.
+- Hardware-side RTL tile priority or cancellation for stale background work.
 - Benchmark traces comparing Performance vs Live Evolution with minimaps on/off.
-- Feeding Workload Inspector events from the real PS driver using PL microtile
+- Feeding Workload Inspector events from the real PS driver using PL RTL tile
   completion / transfer-complete status.
 - Whether a small FPGA-cheap render margin becomes worthwhile once chunk latency
   is dominated by hardware parallelism rather than CPU simulation.
